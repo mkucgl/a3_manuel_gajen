@@ -3,6 +3,8 @@
 
 import io
 import json
+import re
+import string
 import sys
 
 from IMD_resolver import IMD_resolver
@@ -93,6 +95,78 @@ def is_positive_item(item_data, agreement_threshold=0.5):
     
     return judgment_share >= agreement_threshold
 
+def find_entity_in_snippet(entity_name, snippet):
+    """
+    Finds occurrences of an entity name in a snippet.
+    
+    The function has some tolerance built in. It allows variants of the `entity_name`.
+    "Unimportant" subparts of the entity name (prepositions, articles or single letter
+    subsegments) might occur arbitrarily often (below they are called "secondary").
+    This method also ignores punctuation (is tolerant to punctuation variations). Upper/
+    lower case is also ignored. At least one non-"unimportant" entity_name subsequence is
+    required per match (below they are called "main_tokens").
+    
+    The function returns a list of all found occurrences. For each occurrence the start
+    and end positions and the lowercase matched text is returned in a dictionary.
+    """
+    
+    escaped_punctuation = re.escape(string.punctuation)
+    
+    # Some normalization before deriving the search regex from the `entity_name`
+    #normalised_entity_name = re.sub(punctuation_char_class, '', )
+    
+    # Split the `normalised_entity_name` into tokens. These will be used to construct the
+    # search regex.
+    entity_name_tokens = re.split('[%s\s]' % escaped_punctuation, entity_name.lower())
+    
+    # Construct the regex for searching the entity name (more explanations see
+    # description of this function above)
+    
+    all_prepositions = [
+        'aboard', 'about', 'above', 'across', 'after', 'against', 'along', 'amid',
+        'among', 'anti', 'around', 'as', 'at', 'before', 'behind', 'below', 'beneath',
+        'beside', 'besides', 'between', 'beyond', 'but', 'by', 'concerning',
+        'considering', 'despite', 'down', 'during', 'except', 'excepting', 'excluding',
+        'following', 'for', 'from', 'in', 'inside', 'into', 'like', 'minus', 'near', 'of',
+        'off', 'on', 'onto', 'opposite', 'outside', 'over', 'past', 'per', 'plus',
+        'regarding', 'round', 'save', 'since', 'than', 'through', 'to', 'toward',
+        'towards', 'under', 'underneath', 'unlike', 'until', 'up', 'upon', 'versus',
+        'via', 'with', 'within', 'without'
+    ]
+    all_articles = ['a', 'an', 'the']
+    
+    escaped_main_tokens = set()
+    escaped_secondary_tokens = set()
+    for entity_name_token in entity_name_tokens:
+        if len(entity_name_token) > 0:
+            if len(entity_name_token) == 1\
+                or entity_name_token in all_prepositions\
+                or entity_name_token in all_articles:
+                escaped_secondary_tokens.add(re.escape(entity_name_token))
+            else:
+                escaped_main_tokens.add(re.escape(entity_name_token))
+    
+    if len(escaped_main_tokens) == 0:
+        return []
+    
+    punctuation_or_ws_regex = '[\s' + escaped_punctuation + ']+'
+    main_tokens_regex = '(' + ('|'.join(escaped_main_tokens)) + ')+'
+    secondary_tokens_regex = '(' + punctuation_or_ws_regex + ('|'.join(escaped_secondary_tokens)) + ')*' if len(escaped_secondary_tokens) > 0 else ''
+    
+    search_regex = '{0}({1}{2}{0})*'.format(main_tokens_regex, secondary_tokens_regex, punctuation_or_ws_regex)
+    
+    # Collect all matches and return them as result
+    
+    match_data = []
+    for match in re.finditer(search_regex, snippet.lower()):
+        match_data.append({
+            'start': match.start(0),
+            'end': match.end(0),
+            'text': match.group(0)
+        })
+    
+    return match_data
+
 def main():
     """
     This is the main function of the script. Using the function defined above it performs
@@ -112,8 +186,17 @@ def main():
     entity_cache = load_entity_cache()
     
     # Process corpus file line-by-line
+    
+    item_counter = -1 # Useful for debugging and testing
     with open(corpus_file_path, encoding='utf8') as corpus_file:
         for corpus_line in corpus_file:
+            item_counter += 1
+            
+            # # Useful for debugging and testing. Uncomment if you want to want to try
+            # # out code changes on a small subset of the current corpus.
+            # if item_counter == 100:
+            #    break
+            
             # Get item_data: parse corpus line JSON
             item_data = None
             try:
@@ -125,21 +208,32 @@ def main():
             
             # is_positive_item(item_data)
             
+            # Resolve the entity ids
+            
             subject_id = item_data['sub']
             subject_name = get_entity_name(subject_id, api_key, entity_cache)
             
             object_id = item_data['obj']
             object_name = get_entity_name(object_id, api_key, entity_cache)
             
-            
-            print(subject_name)
-            print(object_name)
-            
             # As stated in the instructions for resolving entities we can ignore corpus
             # items for which entity resolution fails
             if subject_name is None or object_name is None:
                 continue
-    
+            
+            # Find occurrences of the entity names in the snippet
+            
+            snippet = item_data['evidences'][0]['snippet']
+            
+            subject_name_occurrences = find_entity_in_snippet(subject_name, snippet)
+            
+            object_name_occurrences = find_entity_in_snippet(object_name, snippet)
+            
+            # As stated in the exercise text: if we can not find the entity name in the
+            # snippet, the corpus item can be skipped ("If you cannot find the entities
+            # in some snippets, you may remove them.")
+            if len(subject_name_occurrences) == 0 or len(object_name_occurrences) == 0:
+                continue
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)
