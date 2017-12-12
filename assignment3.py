@@ -1,30 +1,60 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+This program is our solution to the programming assignment 3.
+
+It expects the following command line arguments:
+
+1. The action the script should perform. This must be one of:
+   
+   - "lrtrain": tains the Logistic Regression model; learns the weights from the
+     specified training corpus; ("lr" stands for Logistic Regression)
+   - "lrclassify": uses the learned weights to classify the items of the specified test
+     corpus using the Logistic Regression model.
+   - "lrvalidate": performs a 10 fold cross validation of the Logistic Regression model
+2. The path to the corpus file
+3. The Google API Key; This argument can be ommitted if all entities are already in the
+   cache (which is the case for all institution and the place of birth corpus versions).
+
+Example program invocations:
+
+```
+python3 assignment3.py lrtrain 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9Qr
+```
+
+```
+python3 assignment3.py lrclassify 20130403-institution.json
+```
+
+Structure of this file:
+
+1. Imports
+2. Globals
+3. Helper Functions for Individual Tasks
+4. Main Function
+"""
+
+### --- Imports --------------------------------------------------------------------- ###
+
 import io
 import json
 import re
+import spacy
 import string
 import sys
 
 from IMD_resolver import IMD_resolver
+# from nltk import Tree
+from sklearn.linear_model import LogisticRegression
 
-"""
-This is file contains the program that solving the tasks in the programming assignemt 1.
 
-It expects 2 command line parameters:
+### --- Globals --------------------------------------------------------------------- ###
 
-1. The path to the corpus file
-2. The Google API Key
+nlp = spacy.load('en')
 
-Example program invocations: 
 
-```
-python3 assignment3.py 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9QrsTuVwABc1De2
-python3 assignment3.py 20130403-institution.json ABc1De2fg3Hi4JkLm567No8p9QrsTuVwABc1De2
-```
-
-"""
+### --- Helper Functions for Individual Tasks --------------------------------------- ###
 
 def load_entity_cache(cache_file='entity_cache.json'):
     """
@@ -99,12 +129,16 @@ def find_entity_in_snippet(entity_name, snippet):
     """
     Finds occurrences of an entity name in a snippet.
     
-    The function has some tolerance built in. It allows variants of the `entity_name`.
-    "Unimportant" subparts of the entity name (prepositions, articles or single letter
-    subsegments) might occur arbitrarily often (below they are called "secondary").
-    This method also ignores punctuation (is tolerant to punctuation variations). Upper/
-    lower case is also ignored. At least one non-"unimportant" entity_name subsequence is
-    required per match (below they are called "main_tokens").
+    The function has some tolerance to variations of the `entity_name`, e.g. for
+    "Donald J. Trump" it also finds "Trump", "Donald Trump" or "Donald J Trump". Some
+    tokens in the `entity_name` are treated as secondary tokens (e.g. prepositions,
+    single letters or articles). These are optional, they can occur in any order an
+    arbitrary number of times between non-secondary tokens (main tokens). At least one
+    main token must be in each match, the match must start with a main token and it must
+    end with a main token. In between tokens must be at least one whitespace or
+    punctuation character.
+    
+    The function is tolerant to casing (upper/lower case) and to punctuation.
     
     The function returns a list of all found occurrences. For each occurrence the start
     and end positions and the lowercase matched text is returned in a dictionary.
@@ -113,7 +147,7 @@ def find_entity_in_snippet(entity_name, snippet):
     escaped_punctuation = re.escape(string.punctuation)
     
     # Some normalization before deriving the search regex from the `entity_name`
-    #normalised_entity_name = re.sub(punctuation_char_class, '', )
+    # normalised_entity_name = re.sub(punctuation_char_class, '', )
     
     # Split the `normalised_entity_name` into tokens. These will be used to construct the
     # search regex.
@@ -167,6 +201,39 @@ def find_entity_in_snippet(entity_name, snippet):
     
     return match_data
 
+def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet):
+    """
+    Extracts features for a corpus item.
+    
+    The function returns two values:
+    
+    - A dictionary mapping the featurne name (some string) to the corresponding feature
+      value.
+    - A list of the feature values
+    """
+    # Dictionary: "feature name -> feature value". Populated below.
+    feature_map = {}
+    
+    # A list just containing the feature values. Populated below.
+    feature_values = []
+    
+    # FEATURE "subject_match_count": Number of `subject_name_matches` (occurrences of the
+    # subject entity name in snippet found by `find_entity_in_snippet`)
+    subject_match_count = len(subject_name_matches)
+    feature_map['subject_match_count'] = subject_match_count
+    feature_values.append(subject_match_count)
+    
+    # FEATURE "object_match_count": Number of `object_name_matches` (occurrences of the
+    # object entity name in snippet found by `find_entity_in_snippet`)
+    object_match_count = len(object_name_matches)
+    feature_map['object_match_count'] = object_match_count
+    feature_values.append(object_match_count)
+    
+    return (feature_map, feature_values)
+
+
+### --- Main Function --------------------------------------------------------------- ###
+
 def main():
     """
     This is the main function of the script. Using the function defined above it performs
@@ -174,18 +241,40 @@ def main():
     """
     
     # Get command line attributes
-    if len(sys.argv) != 3:
-        print('Usage  : python3 assignment3.py <path to corpus> <Google API Key>')
-        print('Example: python3 assignment3.py 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9QrsTuVwABc1De2')
+    allowed_actions = ['lrtrain', 'lrclassify', 'lrvalidate']
+    if len(sys.argv) < 3 or sys.argv[1] not in allowed_actions:
+        print('+----------------------------------------------------------------------+')
+        print('| Hello, unfortunately you specified an illegal number of arguments or |')
+        print('| requested an unknown action. See in the comment in the source code,  |')
+        print('| in the report or below this message how to call the program. See you |')
+        print('| soon.                                                                |')
+        print('+----------------------------------------------------------------------+')
+        print('Usage  : python3 assignment3.py <action: (' + ('|'.join(allowed_actions)) + ')> <path to corpus>[ <Google API Key>]')
+        print('Example: python3 ' + allowed_actions[0] + ' assignment3.py 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9Qr')
+        print('Example: python3 ' + allowed_actions[1] + ' assignment3.py my_test_corpus.json')
         exit(1)
     
-    corpus_file_path = sys.argv[1]
-    api_key = sys.argv[2]
+    action = sys.argv[1]
+    corpus_file_path = sys.argv[2]
+    api_key = sys.argv[3] if len(sys.argv) >= 4 else ''
     
     # Load cached entities to minimize time consuming requests
     entity_cache = load_entity_cache()
     
-    # Process corpus file line-by-line
+    # Initialize data structures available for holding feature values and gold/target
+    # classes
+    
+    # Two dimensional matrix (a list of feature value for each sample / corpus item).
+    # This is the representation `LogisticRegression.fit` expects for the first argument.
+    feature_matrix = []
+    
+    # A "vector" (list) containing the target classes (determined as determined by the
+    # function `is_positive_item`). his is the representation `LogisticRegression.fit`
+    # expects for the second argument.
+    target_classes = []
+    
+    # Process corpus file line-by-line. Extract features and target classes for all
+    # processable corpus items.
     
     item_counter = -1 # Useful for debugging and testing
     with open(corpus_file_path, encoding='utf8') as corpus_file:
@@ -206,8 +295,6 @@ def main():
                 # (unescaped backslashes). We ignore these lines.
                 continue
             
-            # is_positive_item(item_data)
-            
             # Resolve the entity ids
             
             subject_id = item_data['sub']
@@ -225,19 +312,38 @@ def main():
             
             snippet = item_data['evidences'][0]['snippet']
             
-            subject_name_occurrences = find_entity_in_snippet(subject_name, snippet)
+            subject_name_matches = find_entity_in_snippet(subject_name, snippet)
             
-            object_name_occurrences = find_entity_in_snippet(object_name, snippet)
+            object_name_matches = find_entity_in_snippet(object_name, snippet)
             
             # As stated in the exercise text: if we can not find the entity name in the
             # snippet, the corpus item can be skipped ("If you cannot find the entities
             # in some snippets, you may remove them.")
-            if len(subject_name_occurrences) == 0 or len(object_name_occurrences) == 0:
+            if len(subject_name_matches) == 0 or len(object_name_matches) == 0:
                 continue
+            
+            # Determine and remember the target class (used f.e. for training the
+            # Logistic Regression model with `LogisticRegression.fit(...)`)
+            target_classes.append(1 if is_positive_item(item_data) else 0)
+            
+            # Collect the features and add the values to the feature matrix
+            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet)
+            feature_matrix.append(feature_values)
+    
+    # Perform the requested action (e.g. training, testing, 10 fold cross validation)
+    if action == 'lrtrain':
+        logistic_regression = LogisticRegression()
+        logistic_regression.fit(feature_matrix, target_classes)
+        
+        intercept = logistic_regression.intercept_
+        coefficients = logistic_regression.coef_
+        
+        # TODO: misclassification error instead of the following output
+        print(intercept)
+        print(coefficients)
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)
-    
     
     # -----------------------------------------------------------------------------------
     # The following is test code that was used during development. We leave it here in
