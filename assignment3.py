@@ -228,6 +228,8 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
       value.
     - A list of the feature values
     """
+    lower_case_snippet = snippet.lower()
+    
     # Dictionary: "feature name -> feature value". Populated below.
     feature_map = {}
     
@@ -246,7 +248,28 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     feature_map['object_match_count'] = object_match_count
     feature_values.append(object_match_count)
     
+    for lemma_list in lemma_lists:
+        for lemma in lemma_list:
+            feature_values.append(1 if lower_case_snippet.find(lemma) != -1 else 0)
+    
     return (feature_map, feature_values)
+
+def print_baseline(positive_count, total_count):
+    positive_share = positive_count / total_count
+    negative_share = 1 - positive_share
+    print('Target classes (gold):')
+    print('- positive: ' + str(positive_count) + ' (' + format_percents(positive_share) + ')')
+    print('- negative: ' + str(total_count - positive_count) + ' (' + format_percents(negative_share) + ')')
+    print('\nBaseline: ' + format_percents(max(positive_share, negative_share)))
+
+def get_accuracy(prediction, target):
+    return sum([a == b for (a, b) in zip(target, prediction)]) / len(prediction)
+
+def format_float(d):
+    return '{:03.2f}'.format(d)
+
+def format_percents(d):
+    return format_float(100 * d) + '%'
 
 
 ### --- Helper Functions for Feature Preparation ------------------------------------ ###
@@ -433,13 +456,20 @@ def main():
         
         intercept = logistic_regression.intercept_
         coefficients = logistic_regression.coef_
-        print(intercept)
-        print(coefficients)
         
+        print('Logistic regression:')
+        print('- intercept: ' + str(intercept[0]))
+        print('- coefficients: ' + ', '.join([str(c) for c in coefficients[0]]))
+    elif action == 'lrclassify':
+        print_baseline(sum(target_classes), len(target_classes))
         
-    
-    
-    
+        logistic_regression = load_logistic_regression_object()
+        
+        prediction = logistic_regression.predict(feature_matrix)
+        
+        print('\nPrediction accurracy: ' + format_percents(get_accuracy(prediction, target_classes)))
+    else: # lrvalidate
+        print_baseline(sum(target_classes), len(target_classes))
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)
