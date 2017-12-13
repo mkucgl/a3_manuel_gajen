@@ -1,4 +1,4 @@
-<!DOCTYPE html><html><head><title>report</title><meta charse="UTF-8" />
+<!DOCTYPE html><html><head><title>Programming Assignment 3</title><meta charse="UTF-8" />
 <style type="text/css">
 pre, code { background-color: #DEDEDE; white-space: pre-wrap; word-break: break-all; }
 pre { padding: 0.5rem; border: 1px solid #CCCCCC;  }
@@ -8,9 +8,72 @@ a, a:hover, a:active, a:focus { color: blue; }
 <h1 id="programming-assignment-3">Programming Assignment 3</h1>
 <p>Handed in by Manuel Kunz and Gajendira Sivajothi</p>
 <h2 id="introduction">Introduction</h2>
-<p>The code that we produced to solve the programming assignment can be found in the file &quot;assignment3.py&quot;. It can be run like this: <code>python3 assignment3.py</code>.</p>
-<h2 id="exercise-1">Exercise 1</h2>
-<h2 id="technical-errors-and-solutions">Technical Errors and Solutions</h2>
-<p>When trying to use the <code>IMD_Resolver</code> for the first time, we faced the error &quot;&#39;urllib&#39; has no attribute &#39;parse&#39;&quot;.</p>
+<p>The code that we produced to solve the programming assignment can be found in the file &quot;assignment3.py&quot;. It can be run like this...</p>
+<h2 id="documentation-of-development">Documentation of Development</h2>
+<h3 id="exercise-1">Exercise 1</h3>
+<ol>
+<li>IMD_Resolver</li>
+<li>Uncached entity resolution function</li>
+<li>Created functions for storing loading entity cache</li>
+<li>Cached entity resolution function</li>
+<li>Populated entity cache</li>
+<li>Decision whether item is positive item</li>
+<li>Identification of entity name in snippet</li>
+<li>Split corpus: development/training/test data set (see <a href="#data-sets">Data Sets</a> below).</li>
+</ol>
+<h3 id="exercise-2">Exercise 2</h3>
+<ol>
+<li>Match counts as first features</li>
+</ol>
+<h3 id="exercise-3">Exercise 3</h3>
+<ol>
+<li>Including and first try of LogisticRegression: fit, getting coefficients and intercept</li>
+</ol>
+<h2 id="decisions">Decisions</h2>
+<h3 id="data-sets">Data Sets</h3>
+<p>Each of the downloaded corpora we split into three parts:</p>
+<ul>
+<li>Development data set (5% of the lines): Used for inspection during development /
+feature design. Files containing these data sets are suffixed with &quot;_dev&quot;.</li>
+<li>Training data set (75% of the lines): Used for training the Logistic Regression
+classifier. Files containing these data sets are suffixed with &quot;_train&quot;.</li>
+<li>Test data set (20% of the lines): Used for testing the Logistic Regression classifier
+trained with the training set. Files containing these data sets are suffixed with
+&quot;_test&quot;.</li>
+</ul>
+<p>For the development data set for example we took the top most 5% of the lines. The
+following 75% of the lines were assigned to the training set. The last 20% make up the
+test set.</p>
+<h2 id="appendix-1-file-overview">Appendix 1: File Overview</h2>
+<p>Code:</p>
+<ul>
+<li>assignment3.py: The main Python script containing the program that is our solution of
+the third programming assignment doing classification, testing and validation. It also
+contains some code for preparing the features (described below).</li>
+<li>IMD_resolver.py: Resolver for entity ids derived from the example provided in
+ResolvingIDs.docx</li>
+</ul>
+<p>Entity cache:</p>
+<ul>
+<li>entity_cache.json: Contains all the data downloaded during the first resolution of all
+ids so that they don&#39;t have to be resolved again</li>
+</ul>
+<p>Corpora / data sets:</p>
+<ul>
+<li>20130403-institutions.json: The completed institution corpus as downloaded from Google.</li>
+<li>20130403-place_of_birth.json: The complete place of birth corpus as downloaded from
+Google</li>
+</ul>
+<p>General info:</p>
+<ul>
+<li>ML-Tips.ipynb and ML-Tips.py: Tips from the OLAT material folder</li>
+<li>ResolvingIDs.docx: Introduction/example/info of/about id resolution downloaded from
+material folder</li>
+<li>exercise_text.txt: The exercise text as downloaded from OLAT</li>
+</ul>
+<p>Report:</p>
+<ul>
+<li>report.md /report.html: Report in different formats</li>
+</ul>
 
 </body></html>

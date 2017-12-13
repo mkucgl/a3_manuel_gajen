@@ -14,47 +14,54 @@ It expects the following command line arguments:
      corpus using the Logistic Regression model.
    - "lrvalidate": performs a 10 fold cross validation of the Logistic Regression model
 2. The path to the corpus file
-3. The Google API Key; This argument can be ommitted if all entities are already in the
-   cache (which is the case for all institution and the place of birth corpus versions).
+3. The path to the file containing the lists of lemmas that are used to construct features
+4. The Google API Key; This argument can be ommitted if all entities are already in the
+   cache (which is the case for all institution and the place of birth corpus versions)
 
 Example program invocations:
 
 ```
-python3 assignment3.py lrtrain 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9Qr
+python3 assignment3.py lrtrain place-of-birth_train.json place-of-birth_lemmas.json ABc1De2fg3Hi4JkLm567No8p9Qr
 ```
 
 ```
-python3 assignment3.py lrclassify 20130403-institution.json
+python3 assignment3.py lrclassify 20130403-institution.json institution_lemmas.json
 ```
 
 Structure of this file:
 
 1. Imports
 2. Globals
-3. Helper Functions for Individual Tasks
-4. Main Function
+3. Helper Functions for Main Function
+4. Helper Functions for Feature Preparation
+5. Main Function
 """
 
 ### --- Imports --------------------------------------------------------------------- ###
 
 import io
 import json
+import operator
+import pickle
+import pprint
 import re
 import spacy
 import string
 import sys
 
 from IMD_resolver import IMD_resolver
-# from nltk import Tree
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.feature_selection import SelectKBest
+from sklearn.feature_selection import chi2
 from sklearn.linear_model import LogisticRegression
-
 
 ### --- Globals --------------------------------------------------------------------- ###
 
-nlp = spacy.load('en')
+nlp = None # ultimately: nlp = spacy.load('en')
+pp = pprint.PrettyPrinter(indent=4)
 
 
-### --- Helper Functions for Individual Tasks --------------------------------------- ###
+### --- Helper Functions for Main Function ------------------------------------------ ###
 
 def load_entity_cache(cache_file='entity_cache.json'):
     """
@@ -132,16 +139,18 @@ def find_entity_in_snippet(entity_name, snippet):
     The function has some tolerance to variations of the `entity_name`, e.g. for
     "Donald J. Trump" it also finds "Trump", "Donald Trump" or "Donald J Trump". Some
     tokens in the `entity_name` are treated as secondary tokens (e.g. prepositions,
-    single letters or articles). These are optional, they can occur in any order an
-    arbitrary number of times between non-secondary tokens (main tokens). At least one
-    main token must be in each match, the match must start with a main token and it must
-    end with a main token. In between tokens must be at least one whitespace or
-    punctuation character.
+    single letters, conjuctions or articles). These are optional, they can occur in any
+    order anm arbitrary number of times between non-secondary tokens (main tokens). At
+    least one main token must be in each match, the match must start with a main token
+    and it must end with a main token. In between tokens must be at least one whitespace
+    or punctuation character.
     
     The function is tolerant to casing (upper/lower case) and to punctuation.
     
     The function returns a list of all found occurrences. For each occurrence the start
     and end positions and the lowercase matched text is returned in a dictionary.
+    
+    The function has high recall and does OK in terms of precision.
     """
     
     escaped_punctuation = re.escape(string.punctuation)
@@ -168,6 +177,7 @@ def find_entity_in_snippet(entity_name, snippet):
         'via', 'with', 'within', 'without'
     ]
     all_articles = ['a', 'an', 'the']
+    conjunctions = ['and', 'or']
     
     escaped_main_tokens = set()
     escaped_secondary_tokens = set()
@@ -175,7 +185,8 @@ def find_entity_in_snippet(entity_name, snippet):
         if len(entity_name_token) > 0:
             if len(entity_name_token) == 1\
                 or entity_name_token in all_prepositions\
-                or entity_name_token in all_articles:
+                or entity_name_token in all_articles\
+                or entity_name_token in conjunctions:
                 escaped_secondary_tokens.add(re.escape(entity_name_token))
             else:
                 escaped_main_tokens.add(re.escape(entity_name_token))
@@ -201,7 +212,10 @@ def find_entity_in_snippet(entity_name, snippet):
     
     return match_data
 
-def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet):
+def store_logistic_regression_object(lr_object, file_name='logistic_regression.pickle'):
+    pickle.dump(lr_object, open(file_name, 'wb'))
+
+def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet, lemma_lists):
     """
     Extracts features for a corpus item.
     
@@ -232,6 +246,63 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     return (feature_map, feature_values)
 
 
+### --- Helper Functions for Feature Preparation ------------------------------------ ###
+
+def get_k_best_lemmas(corpus_items, k=100, counted_pos=['VERB', 'NOUN', 'ADJ']):
+    """
+    This function selects the `k` best lemmas occurring in the `corpus_itmes` (best
+    features according to skliearn's SelectKBest).
+    
+    This function was used exclusively for the creating the lists of lemmas that can be
+    used to derive features from (occurrence counts). It was applied only to the
+    development corpora (neither to the training nor the test corpora). Features are not
+    extracted dynamically from training or test corpora.
+    
+    The `k` best lemmas are returned as a list.
+    """
+    
+    lemmas = set()
+    lemma_counts = []
+    target = []
+    
+    for item_data in corpus_items:
+        snippet = item_data['evidences'][0]['snippet']
+        doc = nlp(snippet)
+        
+        target.append(is_positive_item(item_data))
+        
+        item_lemma_counts = {}
+        
+        for token in doc:
+            if not token.like_num and not token.is_punct and not token.is_space and not token.is_bracket and not token.is_quote:
+                if token.pos_ in counted_pos:
+                    lemmas.add(token.lemma_)
+                    if token.lemma_ not in item_lemma_counts:
+                        item_lemma_counts[token.lemma_] = 0
+                    item_lemma_counts[token.lemma_] += 1
+        
+        lemma_counts.append(item_lemma_counts)
+    
+    lemmas = list(lemmas)
+    
+    vectorizer = DictVectorizer()
+    initial_feature_matrix = vectorizer.fit_transform(lemma_counts)
+    lemmas = vectorizer.get_feature_names()
+    
+    k_best = SelectKBest(chi2, k=k)
+    
+    optimised_feature_matrix = k_best.fit_transform(initial_feature_matrix, target)
+    
+    selected_lemmas = []
+    mask = k_best.get_support()
+    
+    for selected, lemma in zip(mask, lemmas):
+        if selected:
+            selected_lemmas.append(lemma)
+    
+    return selected_lemmas
+
+
 ### --- Main Function --------------------------------------------------------------- ###
 
 def main():
@@ -242,24 +313,33 @@ def main():
     
     # Get command line attributes
     allowed_actions = ['lrtrain', 'lrclassify', 'lrvalidate']
-    if len(sys.argv) < 3 or sys.argv[1] not in allowed_actions:
+    if len(sys.argv) < 4 or sys.argv[1] not in allowed_actions:
         print('+----------------------------------------------------------------------+')
         print('| Hello, unfortunately you specified an illegal number of arguments or |')
         print('| requested an unknown action. See in the comment in the source code,  |')
         print('| in the report or below this message how to call the program. See you |')
         print('| soon.                                                                |')
         print('+----------------------------------------------------------------------+')
-        print('Usage  : python3 assignment3.py <action: (' + ('|'.join(allowed_actions)) + ')> <path to corpus>[ <Google API Key>]')
-        print('Example: python3 ' + allowed_actions[0] + ' assignment3.py 20130403-place_of_birth.json ABc1De2fg3Hi4JkLm567No8p9Qr')
-        print('Example: python3 ' + allowed_actions[1] + ' assignment3.py my_test_corpus.json')
+        print('Usage  : python3 assignment3.py <action: (' + ('|'.join(allowed_actions)) + ')> <path to corpus> <path to lemmas list>[ <Google API Key>]')
+        print('Example: python3 ' + allowed_actions[0] + ' assignment3.py place-of-birth_train.json place-of-birth_lemmas.json ABc1De2fg3Hi4JkLm567No8p9Qr')
+        print('Example: python3 ' + allowed_actions[1] + ' assignment3.py my_test_corpus.json my_lemmas.json')
         exit(1)
     
     action = sys.argv[1]
     corpus_file_path = sys.argv[2]
-    api_key = sys.argv[3] if len(sys.argv) >= 4 else ''
+    lemma_list_path = sys.argv[3]
+    api_key = sys.argv[4] if len(sys.argv) >= 5 else ''
+    
+    # Initialize globals
+    nlp = spacy.load('en')
     
     # Load cached entities to minimize time consuming requests
     entity_cache = load_entity_cache()
+    
+    # Load the lemma lists specified in the command line arguments
+    lemma_lists = [[]]
+    with open(lemma_list_path, encoding='utf-8') as lemma_lists_file:
+        lemma_lists = json.load(lemma_lists_file)
     
     # Initialize data structures available for holding feature values and gold/target
     # classes
@@ -276,7 +356,10 @@ def main():
     # Process corpus file line-by-line. Extract features and target classes for all
     # processable corpus items.
     
-    item_counter = -1 # Useful for debugging and testing
+    # Useful for debugging, development and testing
+    item_counter = -1 
+    corpus_items = []
+    
     with open(corpus_file_path, encoding='utf8') as corpus_file:
         for corpus_line in corpus_file:
             item_counter += 1
@@ -327,50 +410,34 @@ def main():
             target_classes.append(1 if is_positive_item(item_data) else 0)
             
             # Collect the features and add the values to the feature matrix
-            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet)
+            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet, lemma_lists)
             feature_matrix.append(feature_values)
+            
+            corpus_items.append(item_data)
+    
+    # # Getting k best lemmas for features (see `get_k_best_lemmas`). Was used for
+    # # compiling first lists in institution_lemmas.json and place-of-birth_lemmas.json.
+    # # Now that the lists have been created, `get_k_best_lemmas` is not used anymore.
+    # 
+    # print(json.dumps(get_k_best_lemmas(corpus_items)))
     
     # Perform the requested action (e.g. training, testing, 10 fold cross validation)
     if action == 'lrtrain':
         logistic_regression = LogisticRegression()
         logistic_regression.fit(feature_matrix, target_classes)
         
+        store_logistic_regression_object(logistic_regression)
+        
         intercept = logistic_regression.intercept_
         coefficients = logistic_regression.coef_
         
-        # TODO: misclassification error instead of the following output
-        print(intercept)
-        print(coefficients)
+        
+    
+    
+    
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)
-    
-    # -----------------------------------------------------------------------------------
-    # The following is test code that was used during development. We leave it here in
-    # in case you are interested in our development process.
-    # -----------------------------------------------------------------------------------
-    
-    # # An initial test whether the import of the IMD_resolver and the creation of the
-    # # API key worked.
-    # test_entity = '/m/0dl567'
-    # test_entity_name = IMD_resolver(test_entity, api_key, service_url)
-    # print(test_entity_name)
-    
-    # # A test with the modified IMD_resolver that returns the entire response JSON
-    # test_entity = '/m/0dl567'
-    # test_entity_response_json = IMD_resolver(test_entity, api_key, service_url)
-    # print(test_entity_response_json)
-    
-    # # Testint entity cache roundtrip
-    # entity_cache = { 'x' : 'abc' }
-    # store_entity_cache(entity_cache)
-    # loaded_entity_cache = load_entity_cache()
-    # print(entity_cache)
-    
-    # # Test retrieving entity name with cache
-    # test_entity = '/m/0dl567'
-    # test_entity_name = get_entity_name(test_entity, api_key, entity_cache)
-    # print(test_entity_name)
 
 if __name__ == '__main__':
     main()

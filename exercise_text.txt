@@ -1,0 +1,51 @@
+MLTA Sem2017 Programming assignment 2 (sic)
+
+In this task, you will apply a supervised approach to learning relations between entities in a text. We will perform the classification for two kinds of relations: place of birth and institution, using two classification algorithms. Your task is to design and extract a set of features, to give these features as input to classifiers and to evaluate the performance.
+
+Data and tools:
+
+Both for training and testing, we will use the Google relation extraction corpus (https://code.google.com/p/relation-extraction-corpus/downloads/list). This corpus consists of snippets of text from Wikipedia with annotated relations. You can find more information on this blog (https://research.googleblog.com/2013/04/50000-lessons-on-how-to-read-relation.html). 
+
+The entities in the annotated relations are encoded with IDs. This means that you need to search the Knowledge Graph in order to see what entities are in relation. For querying the database, follow Google Knowlegde graph API Search (https://developers.google.com/knowledge-graph/) and Tatyana's instructions (in the Materials).
+
+Steps
+
+1. Preprocessing:
+
+1.1 Find positive and negative examples for the two relations
+Each relation in the corpus is annotated by several (up to seven) annotators, who gave different responses. As a result, we are not certain whether a text snippet is a positive or a negative example of a relation. Your first task is to find a way to divide the snippets into positive and negative examples based on the distribution of annotators' responses. Note that the proportion of positive vs. negative examples might influence your results.
+
+1.2 Resolve IDs. Once you resolve the IDs, identify the strings in the text snippet. Note that there could be errors here, which can then propagate to the subsequent steps. If you cannot find the entities in some snippets, you may remove them.
+
+1.3 Prepare a development data set to use for the analysis and developing the set of features. These items must not be used for testing.
+
+1.4 Consider some ideas for the features. Decide whether you need any additional tools (e.g. PoS tagger, parsers) to extract the features. If yes, install them and make sure that you can run them on your data.
+
+2. Feature extraction
+
+2.1 Based on the literature and your own intuition, design a set of features to be used for classification. Describe your features and the intuition about what they are supposed to capture.
+
+2.2 Write a script that extracts the features and prepares the data set for a classifier. Include in this step any formatting required by the classifier.
+
+3. Running a classifier and evaluation
+
+3.1 Perform a binary classification using your prepared data set and the Logistic Regression classifier from the Python scikit-learn library. Make sure you understand the output well. Perform the evaluation as a 10-fold cross-validation. Report the result of each fold. Your final result is the average of the 10 folds.
+
+3.2 Adapt the basic Perceptron algorithm  available on this page (https://nbviewer.jupyter.org/github/Christof93/perceptron/blob/master/perceptron_algorithm.ipynb) to your task. Then perform the same steps with the resulting classifier as in 3.1.  
+
+4. Report
+
+Write a short report (2-3 pages) including all the decision that you took. The report should enable other people to perform the task in the exactly the same way you did. Include also a an error analysis.
+
+5. Presentation
+
+Prepare a final presentation (10 minutes presentation + 10 minutes discussion). Make sure that the presentation is clear and informative.
+
+For this task, you are supposed to work in pairs. You are free to choose your partner under the condition that the background of both members of a pair is as similar as possible. Let us know who works with whom by Tuesday 5 December.
+
+Timeline
+
+By 5 December: Step 1 (Preprocessing + some ideas for the features)
+By 12 December: Steps 2 and 3
+By 18 December: Step 4
+By 19 Dcember: Step 5
