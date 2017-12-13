@@ -215,6 +215,9 @@ def find_entity_in_snippet(entity_name, snippet):
 def store_logistic_regression_object(lr_object, file_name='logistic_regression.pickle'):
     pickle.dump(lr_object, open(file_name, 'wb'))
 
+def load_logistic_regression_object(file_name='logistic_regression.pickle'):
+    return pickle.load(open(file_name, 'rb'))
+
 def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet, lemma_lists):
     """
     Extracts features for a corpus item.
@@ -430,6 +433,8 @@ def main():
         
         intercept = logistic_regression.intercept_
         coefficients = logistic_regression.coef_
+        print(intercept)
+        print(coefficients)
         
         
     
