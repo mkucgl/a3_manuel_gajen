@@ -41,6 +41,7 @@ Structure of this file:
 
 import io
 import json
+import numpy as np
 import operator
 import pickle
 import pprint
@@ -54,10 +55,11 @@ from sklearn.feature_extraction import DictVectorizer
 from sklearn.feature_selection import SelectKBest
 from sklearn.feature_selection import chi2
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import KFold
 
 ### --- Globals --------------------------------------------------------------------- ###
 
-nlp = None # ultimately: nlp = spacy.load('en')
+nlp = spacy.load('en')
 pp = pprint.PrettyPrinter(indent=4)
 
 
@@ -213,12 +215,140 @@ def find_entity_in_snippet(entity_name, snippet):
     return match_data
 
 def store_logistic_regression_object(lr_object, file_name='logistic_regression.pickle'):
+    """
+    This function stores the `LogisticRegression` object `lr_object` in a file with
+    `file_name` using `pickle`.
+    
+    Thefunction is used to store the `LogisticRegression` object `lr_object` after it has
+    been trained with the training corpus so that it can be used for classification by a
+    subsequent invocation of the program.
+    """
     pickle.dump(lr_object, open(file_name, 'wb'))
 
 def load_logistic_regression_object(file_name='logistic_regression.pickle'):
+    """
+    This function loads a `LogisticRegression` object from a file with name `file_name`
+    using `pickle`.
+    
+    The function is used to load the `LogisticRegression` object for classification that
+    has been trained in a previous invocation of the program.
+    """
     return pickle.load(open(file_name, 'rb'))
 
-def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet, lemma_lists):
+def collect_lemma_occurrence_counts_as_features(lemma_list, snippet_doc, feature_name_prefix, feature_map, feature_values):
+    """
+    Collects the occurrence counts of the lemmas in `lemma_list` in the parsed spacy
+    document `snippet_doc` as features.
+    
+    The feature values are added to the `feature_map` and the `feature_values` list
+    (structure: see function `collect_features`).
+    """
+    counts = {}
+    
+    for lemma in lemma_list:
+        counts[lemma] = 0
+    
+    total = 0
+    for token in snippet_doc:
+        if token.lemma_ in lemma_list:
+            counts[token.lemma_] += 1
+            total += 1
+    
+    for lemma in lemma_list:
+        count = counts[lemma]
+        value = count / total if total > 0 else 0
+        feature_map[feature_name_prefix + lemma] = value
+        feature_values.append(value)
+
+def collect_lemma_occurrence_indicators_as_features(lemma_list, snippet_doc, feature_name_prefix, feature_map, feature_values):
+    """
+    Collects the occurrence indicators (1 if occurs, 0 otherwise) of the lemmas in
+    `lemma_list` for the parsed spacy document `snippet_doc` as features.
+    
+    The feature values are added to the `feature_map` and the `feature_values` list
+    (structure: see function `collect_features`).
+    """
+    indicators = {}
+    
+    for lemma in lemma_list:
+        indicators[lemma] = 0
+    
+    for token in snippet_doc:
+        if token.lemma_ in lemma_list:
+            indicators[token.lemma_] = 1
+    
+    for lemma in lemma_list:
+        indicator = indicators[lemma]
+        feature_map[feature_name_prefix + lemma] = indicator
+        feature_values.append(indicator)
+
+def collect_ner_occurrence_counts_as_features(
+    snippet_doc, feature_name_prefix, feature_map, feature_values,
+    #entity_types=[
+    #    'DATE', 'PERSON'
+    #]
+    entity_types=[
+        'CARDINAL', 'DATE', 'EVENT', 'FAC', 'GPE', 'LANGUAGE', 'LAW', 'LOC', 'MONEY',
+        'NORP', 'ORDINAL', 'ORG', 'PERCENT', 'PERSON', 'PRODUCT', 'QUANTITY', 'TIME',
+        'WORK_OF_ART'
+    ]
+    ):
+    """
+    Collects occurrence counts of the `entity_types` in the `snippets_doc` as features.
+    
+    The feature values are added to the `feature_map` and the `feature_values` list
+    (structure: see function `collect_features`).
+    """
+    counts = {}
+    
+    for entity_type in entity_types:
+        counts[entity_type] = 0
+    
+    total = 0
+    for token in snippet_doc:
+        if token.ent_type_ in entity_types:
+            counts[token.ent_type_] += 1
+            total += 1
+    
+    for entity_type in entity_types:
+        count = counts[entity_type]
+        value = count / total if total > 0 else 0
+        feature_map[feature_name_prefix + entity_type] = value
+        feature_values.append(value)
+
+def collect_ner_occurrence_indicators_as_features(
+    snippet_doc, feature_name_prefix, feature_map, feature_values,
+    #entity_types=[
+    #    'DATE', 'PERSON'
+    #]
+    entity_types=[
+        'CARDINAL', 'DATE', 'EVENT', 'FAC', 'GPE', 'LANGUAGE', 'LAW', 'LOC', 'MONEY',
+        'NORP', 'ORDINAL', 'ORG', 'PERCENT', 'PERSON', 'PRODUCT', 'QUANTITY', 'TIME',
+        'WORK_OF_ART'
+    ]
+    ):
+    """
+    Collects occurrence indicators (1|0) of the `entity_types` in the `snippets_doc` as
+    features.
+    
+    The feature values are added to the `feature_map` and the `feature_values` list
+    (structure: see function `collect_features`).
+    """
+    indicators = {}
+    
+    for entity_type in entity_types:
+        indicators[entity_type] = 0
+    
+    for token in snippet_doc:
+        if token.ent_type_ in entity_types:
+            indicators[token.ent_type_] = 1
+    
+    for entity_type in entity_types:
+        indicator = indicators[entity_type]
+        feature_map[feature_name_prefix + entity_type] = indicator
+        feature_values.append(indicator)
+
+def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, lemma_lists):
     """
     Extracts features for a corpus item.
     
@@ -228,7 +358,8 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
       value.
     - A list of the feature values
     """
-    lower_case_snippet = snippet.lower()
+    # Parse snippet with spacy
+    snippet_doc = nlp(snippet)
     
     # Dictionary: "feature name -> feature value". Populated below.
     feature_map = {}
@@ -248,28 +379,167 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     feature_map['object_match_count'] = object_match_count
     feature_values.append(object_match_count)
     
-    for lemma_list in lemma_lists:
-        for lemma in lemma_list:
-            feature_values.append(1 if lower_case_snippet.find(lemma) != -1 else 0)
+    
+    # Features derived from lemma `lemma_lists`:
+    for (list_index, lemma_list) in enumerate(lemma_lists):
+        # FEATURE "lemma_list_count_<i>_<lemma>": The number of occurrences of the
+        # lemmas in the current lemma list in the snippet
+        collect_lemma_occurrence_counts_as_features(lemma_list, snippet_doc, 'lemma_list_count_{0}_'.format(list_index), feature_map, feature_values)
+        
+        # FEATURE "lemma_list_indicator_<i>_<lemma>": Indicators for occurrence of the
+        # lemmas in the current lemma list in the snippet
+        collect_lemma_occurrence_indicators_as_features(lemma_list, snippet_doc, 'lemma_list_indicator_{0}_'.format(list_index), feature_map, feature_values)
+    
+    # Features derived from named entities found by spacy:
+    
+    # FEATURE "ner_entity_type_count_<entity_type>": Number of times the entity type
+    # occurs in snippet.
+    collect_ner_occurrence_counts_as_features(snippet_doc, 'ner_entity_type_count_', feature_map, feature_values)
+    
+    # FEATURE "ner_entity_type_indicator_<entity_type>": Indicators whether entity type
+    # occurs in snippet.
+    collect_ner_occurrence_indicators_as_features(snippet_doc, 'ner_entity_type_indicator_', feature_map, feature_values)
     
     return (feature_map, feature_values)
 
-def print_baseline(positive_count, total_count):
-    positive_share = positive_count / total_count
-    negative_share = 1 - positive_share
-    print('Target classes (gold):')
-    print('- positive: ' + str(positive_count) + ' (' + format_percents(positive_share) + ')')
-    print('- negative: ' + str(total_count - positive_count) + ' (' + format_percents(negative_share) + ')')
-    print('\nBaseline: ' + format_percents(max(positive_share, negative_share)))
-
-def get_accuracy(prediction, target):
-    return sum([a == b for (a, b) in zip(target, prediction)]) / len(prediction)
-
-def format_float(d):
-    return '{:03.2f}'.format(d)
-
 def format_percents(d):
-    return format_float(100 * d) + '%'
+    """
+    Formats a number as percentage (e.g. 0.34234 -> '34.23%')
+    """
+    return '{:03.2f}'.format(100 * d) + '%'
+
+def print_evaluation(prediction, target_classes, top_margin=False):
+    """
+    TODO: description
+    """
+    if top_margin:
+        print('')
+    
+    sys_pos_tar_pos = 0
+    sys_pos_tar_neg = 0
+    sys_neg_tar_pos = 0
+    sys_neg_tar_neg = 0
+    total = len(target_classes)
+    
+    for (predicted, target) in zip(prediction, target_classes):
+        if predicted == 1:
+            if target == 1:
+                sys_pos_tar_pos += 1
+            else:
+                sys_pos_tar_neg += 1
+        else:
+            if target == 1:
+                sys_neg_tar_pos += 1
+            else:
+                sys_neg_tar_neg += 1
+    
+    print('                  +-----------------+-----------------+-----------------+')
+    print('                  | Target positive | Target negative | SUM             |')
+    print('+-----------------+-----------------+-----------------+-----------------+')
+    print('| System positive | ' + str(sys_pos_tar_pos).rjust(7) + format_percents(sys_pos_tar_pos / total).rjust(8) + ' | ' + str(sys_pos_tar_neg).rjust(7) + format_percents(sys_pos_tar_neg / total).rjust(8) + ' | ' + str(sys_pos_tar_pos + sys_pos_tar_neg).rjust(7) + format_percents((sys_pos_tar_pos + sys_pos_tar_neg) / total).rjust(8) + ' |')
+    print('+-----------------+-----------------+-----------------+-----------------+')
+    print('| System negative | ' + str(sys_neg_tar_pos).rjust(7) + format_percents(sys_neg_tar_pos / total).rjust(8) + ' | ' + str(sys_neg_tar_neg).rjust(7) + format_percents(sys_neg_tar_neg / total).rjust(8) + ' | ' + str(sys_neg_tar_pos + sys_neg_tar_neg).rjust(7) + format_percents((sys_neg_tar_pos + sys_neg_tar_neg) / total).rjust(8) + ' |')
+    print('+-----------------+-----------------+-----------------+-----------------+')
+    print('| SUM             | ' + str(sys_pos_tar_pos + sys_neg_tar_pos).rjust(7) + format_percents((sys_pos_tar_pos + sys_neg_tar_pos) / total).rjust(8) + ' | ' + str(sys_pos_tar_neg + sys_neg_tar_neg).rjust(7) + format_percents((sys_pos_tar_neg + sys_neg_tar_neg) / total).rjust(8) + ' | ' + str(total).rjust(7) + '         |')
+    print('+-----------------+-----------------+-----------------+-----------------+')
+    
+    print('')
+    print('Baseline: ' + format_percents(max((sys_pos_tar_pos + sys_neg_tar_pos) / total, (sys_pos_tar_neg + sys_neg_tar_neg) / total)))
+    print('System accuracy: ' + format_percents((sys_pos_tar_pos + sys_neg_tar_neg) / total))
+
+def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemma_lists, api_key, entity_cache, dev_size=None, verbose=False):
+    """
+    TODO: description
+    """
+    
+    # Initialize data structures available for holding feature values and gold/target
+    # classes
+    
+    # Two dimensional matrix (a list of feature value for each sample / corpus item).
+    # This is the representation `LogisticRegression.fit` expects for the first argument.
+    feature_matrix = []
+    
+    # A "vector" (list) containing the target classes (determined as determined by the
+    # function `is_positive_item`). his is the representation `LogisticRegression.fit`
+    # expects for the second argument.
+    target_classes = []
+    
+    # Process corpus file line-by-line. Extract features and target classes for all
+    # processable corpus items.
+    
+    # Useful for debugging, development and testing
+    item_counter = -1 
+    # corpus_items = [] # <- This was used for compilation of k best lemmas (see below)
+    
+    with open(corpus_file_path, encoding='utf8') as corpus_file:
+        for corpus_line in corpus_file:
+            item_counter += 1
+            
+            if verbose:
+                print('Processing item ' + '{:06d}'.format(item_counter) + ' (preparation and feature extraction)')
+            
+            # Useful for debugging and testing. Now that I am using spacy, I can't wait
+            # for thousands of items to be processed every time I make a little change in
+            # the code.
+            if dev_size == 'xs' and item_counter == 100\
+                or dev_size == 's' and item_counter == 1000:
+                break
+            
+            # Get item_data: parse corpus line JSON
+            item_data = None
+            try:
+                item_data = json.loads(corpus_line)
+            except:
+                # A few lines (4) in the institution corpus contain invalid JSON
+                # (unescaped backslashes). We ignore these lines.
+                continue
+            
+            # Resolve the entity ids
+            
+            subject_id = item_data['sub']
+            subject_name = get_entity_name(subject_id, api_key, entity_cache)
+            
+            object_id = item_data['obj']
+            object_name = get_entity_name(object_id, api_key, entity_cache)
+            
+            # As stated in the instructions for resolving entities we can ignore corpus
+            # items for which entity resolution fails
+            if subject_name is None or object_name is None:
+                continue
+            
+            # Find occurrences of the entity names in the snippet
+            
+            snippet = item_data['evidences'][0]['snippet']
+            
+            subject_name_matches = find_entity_in_snippet(subject_name, snippet)
+            
+            object_name_matches = find_entity_in_snippet(object_name, snippet)
+            
+            # As stated in the exercise text: if we can not find the entity name in the
+            # snippet, the corpus item can be skipped ("If you cannot find the entities
+            # in some snippets, you may remove them.")
+            if len(subject_name_matches) == 0 or len(object_name_matches) == 0:
+                continue
+            
+            # Determine and remember the target class (used f.e. for training the
+            # Logistic Regression model with `LogisticRegression.fit(...)`)
+            target_classes.append(1 if is_positive_item(item_data) else 0)
+            
+            # Collect the features and add the values to the feature matrix
+            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, lemma_lists)
+            feature_matrix.append(feature_values)
+            
+            # # `corpus_items` was used to extract lemmas for features (see below). Used
+            # # only during feature design. Not used anymore.
+            # corpus_items.append(item_data)
+    
+    # # Getting k best lemmas for features (see `get_k_best_lemmas`). Was used for
+    # # compiling first lists in institution_lemmas.json and place-of-birth_lemmas.json.
+    # # Now that the lists have been created, `get_k_best_lemmas` is not used anymore.
+    # 
+    # print(json.dumps(get_k_best_lemmas(corpus_items)))
+    
+    return (feature_matrix, target_classes)
 
 
 ### --- Helper Functions for Feature Preparation ------------------------------------ ###
@@ -356,9 +626,6 @@ def main():
     lemma_list_path = sys.argv[3]
     api_key = sys.argv[4] if len(sys.argv) >= 5 else ''
     
-    # Initialize globals
-    nlp = spacy.load('en')
-    
     # Load cached entities to minimize time consuming requests
     entity_cache = load_entity_cache()
     
@@ -367,85 +634,8 @@ def main():
     with open(lemma_list_path, encoding='utf-8') as lemma_lists_file:
         lemma_lists = json.load(lemma_lists_file)
     
-    # Initialize data structures available for holding feature values and gold/target
-    # classes
-    
-    # Two dimensional matrix (a list of feature value for each sample / corpus item).
-    # This is the representation `LogisticRegression.fit` expects for the first argument.
-    feature_matrix = []
-    
-    # A "vector" (list) containing the target classes (determined as determined by the
-    # function `is_positive_item`). his is the representation `LogisticRegression.fit`
-    # expects for the second argument.
-    target_classes = []
-    
-    # Process corpus file line-by-line. Extract features and target classes for all
-    # processable corpus items.
-    
-    # Useful for debugging, development and testing
-    item_counter = -1 
-    corpus_items = []
-    
-    with open(corpus_file_path, encoding='utf8') as corpus_file:
-        for corpus_line in corpus_file:
-            item_counter += 1
-            
-            # # Useful for debugging and testing. Uncomment if you want to want to try
-            # # out code changes on a small subset of the current corpus.
-            # if item_counter == 100:
-            #    break
-            
-            # Get item_data: parse corpus line JSON
-            item_data = None
-            try:
-                item_data = json.loads(corpus_line)
-            except:
-                # A few lines (4) in the institution corpus contain invalid JSON
-                # (unescaped backslashes). We ignore these lines.
-                continue
-            
-            # Resolve the entity ids
-            
-            subject_id = item_data['sub']
-            subject_name = get_entity_name(subject_id, api_key, entity_cache)
-            
-            object_id = item_data['obj']
-            object_name = get_entity_name(object_id, api_key, entity_cache)
-            
-            # As stated in the instructions for resolving entities we can ignore corpus
-            # items for which entity resolution fails
-            if subject_name is None or object_name is None:
-                continue
-            
-            # Find occurrences of the entity names in the snippet
-            
-            snippet = item_data['evidences'][0]['snippet']
-            
-            subject_name_matches = find_entity_in_snippet(subject_name, snippet)
-            
-            object_name_matches = find_entity_in_snippet(object_name, snippet)
-            
-            # As stated in the exercise text: if we can not find the entity name in the
-            # snippet, the corpus item can be skipped ("If you cannot find the entities
-            # in some snippets, you may remove them.")
-            if len(subject_name_matches) == 0 or len(object_name_matches) == 0:
-                continue
-            
-            # Determine and remember the target class (used f.e. for training the
-            # Logistic Regression model with `LogisticRegression.fit(...)`)
-            target_classes.append(1 if is_positive_item(item_data) else 0)
-            
-            # Collect the features and add the values to the feature matrix
-            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, snippet, lemma_lists)
-            feature_matrix.append(feature_values)
-            
-            corpus_items.append(item_data)
-    
-    # # Getting k best lemmas for features (see `get_k_best_lemmas`). Was used for
-    # # compiling first lists in institution_lemmas.json and place-of-birth_lemmas.json.
-    # # Now that the lists have been created, `get_k_best_lemmas` is not used anymore.
-    # 
-    # print(json.dumps(get_k_best_lemmas(corpus_items)))
+    # Get the `feature_matrix` and the (gold) `target_classes`
+    (feature_matrix, target_classes) = get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemma_lists, api_key, entity_cache, sys.argv[4] if (len(sys.argv) >= 5 and len(sys.argv[4]) <= 2) else None , True)
     
     # Perform the requested action (e.g. training, testing, 10 fold cross validation)
     if action == 'lrtrain':
@@ -457,19 +647,42 @@ def main():
         intercept = logistic_regression.intercept_
         coefficients = logistic_regression.coef_
         
-        print('Logistic regression:')
+        print('\nLogistic regression:')
         print('- intercept: ' + str(intercept[0]))
         print('- coefficients: ' + ', '.join([str(c) for c in coefficients[0]]))
     elif action == 'lrclassify':
-        print_baseline(sum(target_classes), len(target_classes))
-        
         logistic_regression = load_logistic_regression_object()
         
         prediction = logistic_regression.predict(feature_matrix)
         
-        print('\nPrediction accurracy: ' + format_percents(get_accuracy(prediction, target_classes)))
+        print_evaluation(prediction, target_classes, True)
     else: # lrvalidate
-        print_baseline(sum(target_classes), len(target_classes))
+        feature_matrix = np.array(feature_matrix)
+        target_classes = np.array(target_classes)
+        
+        fold_count = 10
+        fold_index = 0 # for output
+    
+        k_fold = KFold(n_splits=fold_count, random_state=None, shuffle=False)
+        
+        for train_index, test_index in k_fold.split(feature_matrix):
+            print('\nFold ' + str(fold_index + 1).rjust(2) + ' / ' + str(fold_count).rjust(2))
+            print('------------')
+            
+            train_feature_matrix = feature_matrix[train_index]
+            train_target_classes = target_classes[train_index]
+            
+            test_feature_matrix = feature_matrix[test_index]
+            test_target_classes = target_classes[test_index]
+            
+            logistic_regression = LogisticRegression()
+            logistic_regression.fit(train_feature_matrix, train_target_classes)
+            
+            prediction = logistic_regression.predict(test_feature_matrix)
+            
+            print_evaluation(prediction, test_target_classes, True)
+            
+            fold_index += 1
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)
