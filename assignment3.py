@@ -43,6 +43,7 @@ import io
 import json
 import numpy as np
 import operator
+import os
 import pickle
 import pprint
 import re
@@ -348,7 +349,7 @@ def collect_ner_occurrence_indicators_as_features(
         feature_map[feature_name_prefix + entity_type] = indicator
         feature_values.append(indicator)
 
-def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, lemma_lists):
+def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, lemma_lists):
     """
     Extracts features for a corpus item.
     
@@ -359,7 +360,7 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     - A list of the feature values
     """
     # Parse snippet with spacy
-    snippet_doc = nlp(snippet)
+    # snippet_doc = nlp(snippet)
     
     # Dictionary: "feature name -> feature value". Populated below.
     feature_map = {}
@@ -400,6 +401,43 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     # occurs in snippet.
     collect_ner_occurrence_indicators_as_features(snippet_doc, 'ner_entity_type_indicator_', feature_map, feature_values)
     
+    
+    
+    
+    subject_as_ne = 0
+    subject_as_person = 0
+    subject_as_org = 0
+    subject_as_gpe = 0
+    subject_as_event = 0
+    subject_as_loc = 0
+    
+    for token in snippet_doc:
+        for match in subject_name_matches:
+            if token.idx >= match['start'] and token.idx < match['end']:
+                subject_as_ne = 1
+                if token.ent_type_ == 'PERSON':
+                    subject_as_person = 1
+                elif token.ent_type_ == 'ORG':
+                    subject_as_org = 1
+                elif token.ent_type_ == 'GPE':
+                    subject_as_gpe = 1
+                elif token.ent_type_ == 'EVENT':
+                    subject_as_event = 1
+                elif token.ent_type_ == 'LOC':
+                    subject_as_loc = 1
+    
+    feature_values.append(subject_as_ne)
+    # feature_values.append(subject_as_person)
+    # feature_values.append(subject_as_org)
+    # feature_values.append(subject_as_gpe)
+    # feature_values.append(subject_as_event)
+    # feature_values.append(subject_as_loc)
+        
+        #print('- ' + token.orth_ + ' ' + str(token.idx))
+        #print('  - ' + snippet[token.idx:min(len(snippet), token.idx + 100)])
+    
+    
+    
     return (feature_map, feature_values)
 
 def format_percents(d):
@@ -410,7 +448,8 @@ def format_percents(d):
 
 def print_evaluation(prediction, target_classes, top_margin=False):
     """
-    TODO: description
+    This function prints the evaluation of a prediction (the confusion matrix, the
+    baseline and the accuracy of the system).
     """
     if top_margin:
         print('')
@@ -443,13 +482,48 @@ def print_evaluation(prediction, target_classes, top_margin=False):
     print('| SUM             | ' + str(sys_pos_tar_pos + sys_neg_tar_pos).rjust(7) + format_percents((sys_pos_tar_pos + sys_neg_tar_pos) / total).rjust(8) + ' | ' + str(sys_pos_tar_neg + sys_neg_tar_neg).rjust(7) + format_percents((sys_pos_tar_neg + sys_neg_tar_neg) / total).rjust(8) + ' | ' + str(total).rjust(7) + '         |')
     print('+-----------------+-----------------+-----------------+-----------------+')
     
+    sys_accuracy = (sys_pos_tar_pos + sys_neg_tar_neg) / total
+    baseline_accuracy = max((sys_pos_tar_pos + sys_neg_tar_pos) / total, (sys_pos_tar_neg + sys_neg_tar_neg) / total)
+    
     print('')
-    print('Baseline: ' + format_percents(max((sys_pos_tar_pos + sys_neg_tar_pos) / total, (sys_pos_tar_neg + sys_neg_tar_neg) / total)))
-    print('System accuracy: ' + format_percents((sys_pos_tar_pos + sys_neg_tar_neg) / total))
+    print('Baseline: ' + format_percents(baseline_accuracy))
+    print('System accuracy: ' + format_percents(sys_accuracy))
+    
+    return (sys_accuracy, baseline_accuracy)
+
+def print_aggregated_evaluation(sys_better_count, avg_sys_accuracy, avg_baseline_accuracy, fold_count, top_margin=False):
+    """
+    Prints evaluation summary over all folds (how often better than baseline, average
+    accuracies)
+    """
+    baseline_better_count = fold_count - sys_better_count
+    
+    if top_margin:
+        print('')
+    print('Summary')
+    print('-------')
+    print('')
+    print('+---------------------------+---------+----------+')
+    print('| System better             | ' + str(sys_better_count).rjust(7) + ' | ' +  format_percents(sys_better_count / fold_count).rjust(8) + ' |')
+    print('+---------------------------+---------+----------+')
+    print('| Baseline better           | ' + str(baseline_better_count).rjust(7) + ' | ' +  format_percents(baseline_better_count / fold_count).rjust(8) + ' |')
+    print('+---------------------------+---------+----------+')
+    print('| Average accuracy baseline | ' + format_percents(avg_baseline_accuracy).rjust(18) + ' |')
+    print('+---------------------------+--------------------+')
+    print('| Average accuracy system   | ' + format_percents(avg_sys_accuracy).rjust(18) + ' |')
+    print('+---------------------------+--------------------+')
 
 def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemma_lists, api_key, entity_cache, dev_size=None, verbose=False):
     """
-    TODO: description
+    This function processes the corpus file line by line and gets the features and the
+    target class for each processable item.
+    
+    The function relies on other function (e.g. to resolve the entities, to find the
+    entities in the snippet, to do the actual feature extraction and to aggregate the
+    raters judgments).
+    
+    It returns the feature matrix (two dimensional list) and the target classes (one
+    dimensional list)
     """
     
     # Initialize data structures available for holding feature values and gold/target
@@ -468,8 +542,21 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
     # processable corpus items.
     
     # Useful for debugging, development and testing
-    item_counter = -1 
+    item_counter = -1
     # corpus_items = [] # <- This was used for compilation of k best lemmas (see below)
+    
+    # These variables are used for storing the first 3000 spacy parsed documents in a
+    # cache file (with the name `snippet_docs_pickle_path`). This is because the parsing
+    # with spacy takes up a lot of time and causes waiting time during development. This
+    # way the code can be very quickly tested with up to 3000 items. We computer refuses
+    # to cache all the parses and kills the process when trying to do so.
+    processable_item_counter = 0
+    snippet_docs = []
+    snippet_docs_pickle_path = os.path.splitext(corpus_file_path)[0] + '_docs.pickle'
+    
+    # Load spacy parses that we might have stored in the cache before.
+    if os.path.isfile(snippet_docs_pickle_path):
+        snippet_docs = pickle.load(open(snippet_docs_pickle_path, 'rb'))
     
     with open(corpus_file_path, encoding='utf8') as corpus_file:
         for corpus_line in corpus_file:
@@ -482,7 +569,8 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
             # for thousands of items to be processed every time I make a little change in
             # the code.
             if dev_size == 'xs' and item_counter == 100\
-                or dev_size == 's' and item_counter == 1000:
+                or dev_size == 's' and item_counter == 1000\
+                or dev_size == 'm' and item_counter == 3000:
                 break
             
             # Get item_data: parse corpus line JSON
@@ -525,19 +613,34 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
             # Logistic Regression model with `LogisticRegression.fit(...)`)
             target_classes.append(1 if is_positive_item(item_data) else 0)
             
+            
+            # Get spacy parsed snippet. Add it to cache if it is within the first 3000
+            # snippets.
+            snippet_doc = None
+            if processable_item_counter < len(snippet_docs):
+                snippet_doc = snippet_docs[processable_item_counter]
+            else:
+                snippet_doc = nlp(snippet)
+                if len(snippet_docs) < 3000:
+                    snippet_docs.append(snippet_doc)
+            
             # Collect the features and add the values to the feature matrix
-            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, lemma_lists)
+            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, lemma_lists)
             feature_matrix.append(feature_values)
             
             # # `corpus_items` was used to extract lemmas for features (see below). Used
             # # only during feature design. Not used anymore.
             # corpus_items.append(item_data)
+            
+            processable_item_counter += 1
     
     # # Getting k best lemmas for features (see `get_k_best_lemmas`). Was used for
     # # compiling first lists in institution_lemmas.json and place-of-birth_lemmas.json.
     # # Now that the lists have been created, `get_k_best_lemmas` is not used anymore.
     # 
-    # print(json.dumps(get_k_best_lemmas(corpus_items)))
+    
+    # Store spacy parses in cache cache
+    pickle.dump(snippet_docs, open(snippet_docs_pickle_path, 'wb'))
     
     return (feature_matrix, target_classes)
 
@@ -662,7 +765,12 @@ def main():
         
         fold_count = 10
         fold_index = 0 # for output
-    
+        
+        # Variables for aggregated evaluation
+        sys_better_count = 0
+        sys_accuracy_sum = 0
+        baseline_accuracy_sum = 0
+        
         k_fold = KFold(n_splits=fold_count, random_state=None, shuffle=False)
         
         for train_index, test_index in k_fold.split(feature_matrix):
@@ -680,9 +788,16 @@ def main():
             
             prediction = logistic_regression.predict(test_feature_matrix)
             
-            print_evaluation(prediction, test_target_classes, True)
+            (sys_accuracy, baseline_accuracy) = print_evaluation(prediction, test_target_classes, True)
+            
+            sys_accuracy_sum += sys_accuracy
+            baseline_accuracy_sum += baseline_accuracy
+            if sys_accuracy > baseline_accuracy:
+                sys_better_count += 1
             
             fold_index += 1
+        
+        print_aggregated_evaluation(sys_better_count, sys_accuracy_sum / fold_count, baseline_accuracy_sum / fold_count, fold_count, True)
     
     # Store all found entities in the cache persistent cache
     store_entity_cache(entity_cache)

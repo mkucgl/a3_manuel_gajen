@@ -2,4 +2,5 @@
 .~lock.ResolvingIDs.docx#
 ubuntu-xenial-16.04-cloudimg-console.log
 __pycache__
+*_docs.pickle
 
