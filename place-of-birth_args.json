@@ -15,6 +15,38 @@
 		"underwater", "use", "verse", "vicarage", "village", "water", "weigh", "welcome",
 		"western", "wildlife", "wound", "yacht",
 		
-		"bear", "native", "raise"
+		"bear", "die", "raise", "study", "graduate", "old", "year", "education", "grow",
+		
+		"town", "city", "residence", "reside", "live", "where",
+		
+		"son",
+		"daughter",
+		"mother",
+		"father",
+		"family",
+		"child",
+		"parent",
+		"childhood",
+		"brother",
+		"sister",
+		"pupil",
+		"teacher",
+		"birth",
+		"death",
+		"grandparent",
+		"grandfather",
+		"grandmother",
+		
+		"january",
+		"february",
+		"march",
+		"april",
+		"may",
+		"june",
+		"july",
+		"august",
+		"september",
+		"november",
+		"december"
 	]
 ]

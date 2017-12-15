@@ -14,18 +14,29 @@ It expects the following command line arguments:
      corpus using the Logistic Regression model.
    - "lrvalidate": performs a 10 fold cross validation of the Logistic Regression model
 2. The path to the corpus file
-3. The path to the file containing the lists of lemmas that are used to construct features
+3. The path to the file containing the argument lists from which some features are
+   constructed
 4. The Google API Key; This argument can be ommitted if all entities are already in the
    cache (which is the case for all institution and the place of birth corpus versions)
 
-Example program invocations:
+Example 1 (only training; use your own API key if new features need to be downloaded,
+otherwise you can omit the API key):
 
 ```
-python3 assignment3.py lrtrain place-of-birth_train.json place-of-birth_lemmas.json ABc1De2fg3Hi4JkLm567No8p9Qr
+python3 assignment3.py lrtrain institution_train.json institution_args.json G00gleAPIk3y
 ```
 
+Example 2 (training, then testing/classification):
+
 ```
-python3 assignment3.py lrclassify 20130403-institution.json institution_lemmas.json
+python3 assignment3.py lrtrain institution_train.json institution_args.json
+python3 assignment3.py lrclassify institution_test.json institution_args.json
+```
+
+Example 3 (10-fold cross validation)
+
+```
+python3 assignment3.py lrvalidate place-of-birth_nodev.json place-of-birth_args.json
 ```
 
 Structure of this file:
@@ -135,7 +146,7 @@ def is_positive_item(item_data, agreement_threshold=0.5):
     
     return judgment_share >= agreement_threshold
 
-def find_entity_in_snippet(entity_name, snippet):
+def find_entity_in_snippet(entity_name, snippet, arg_type):
     """
     Finds occurrences of an entity name in a snippet.
     
@@ -210,7 +221,8 @@ def find_entity_in_snippet(entity_name, snippet):
         match_data.append({
             'start': match.start(0),
             'end': match.end(0),
-            'text': match.group(0)
+            'text': match.group(0),
+            'arg_type': arg_type
         })
     
     return match_data
@@ -349,7 +361,7 @@ def collect_ner_occurrence_indicators_as_features(
         feature_map[feature_name_prefix + entity_type] = indicator
         feature_values.append(indicator)
 
-def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, lemma_lists):
+def collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, arg_lists):
     """
     Extracts features for a corpus item.
     
@@ -359,14 +371,15 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
       value.
     - A list of the feature values
     """
-    # Parse snippet with spacy
-    # snippet_doc = nlp(snippet)
+    lower_case_snippet = snippet.lower()
     
     # Dictionary: "feature name -> feature value". Populated below.
     feature_map = {}
     
     # A list just containing the feature values. Populated below.
     feature_values = []
+    
+    
     
     # FEATURE "subject_match_count": Number of `subject_name_matches` (occurrences of the
     # subject entity name in snippet found by `find_entity_in_snippet`)
@@ -381,15 +394,18 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     feature_values.append(object_match_count)
     
     
-    # Features derived from lemma `lemma_lists`:
-    for (list_index, lemma_list) in enumerate(lemma_lists):
-        # FEATURE "lemma_list_count_<i>_<lemma>": The number of occurrences of the
-        # lemmas in the current lemma list in the snippet
-        collect_lemma_occurrence_counts_as_features(lemma_list, snippet_doc, 'lemma_list_count_{0}_'.format(list_index), feature_map, feature_values)
-        
-        # FEATURE "lemma_list_indicator_<i>_<lemma>": Indicators for occurrence of the
-        # lemmas in the current lemma list in the snippet
-        collect_lemma_occurrence_indicators_as_features(lemma_list, snippet_doc, 'lemma_list_indicator_{0}_'.format(list_index), feature_map, feature_values)
+    
+    # Features derived from lemma list `arg_lists[0]`:
+    
+    # FEATURE "lemma_list_count_<lemma>": The number of occurrences of the
+    # lemmas in the current lemma list in the snippet
+    collect_lemma_occurrence_counts_as_features(arg_lists[0], snippet_doc, 'lemma_list_count_', feature_map, feature_values)
+    
+    # FEATURE "lemma_list_indicator_<lemma>": Indicators for occurrence of the
+    # lemmas in the current lemma list in the snippet
+    collect_lemma_occurrence_indicators_as_features(arg_lists[0], snippet_doc, 'lemma_list_indicator_', feature_map, feature_values)
+    
+    
     
     # Features derived from named entities found by spacy:
     
@@ -403,38 +419,370 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     
     
     
+    # Features derived from subject entity types.
     
+    # FEATURE "subject_as_ne": Value that indicates (1: yes, 0: no) whether a named
+    # entity was found by spacy overlapping a subject name match.
+    
+    # FEATURE "subject_as_entity_type_<entity_type>_indicator": Value that indicates
+    # whether a subject name match intersects a named entity token of type <entity_type>
+    # identified by spacy. 1 if spacy found a named entity of type <entity_type>
+    # intersecting a subject name match, 0 otherwise.
+    
+    # FEATURE "subject_as_entity_type_<entity_type>_count": Number of spacy tokens of
+    # named entity type <entity_type> overlapping a subject name match.
+    
+    # FEATURE "subject_as_entity_type_<entity_type>_share": The percentage of all named
+    # entity tokens found by spacy overlapping a subject name match that are of type
+    # <entity_type>.
+    
+    subject_as_entity_types = [
+        'PERSON',
+        'ORG',
+        'GPE',
+        'EVENT',
+        'LOC',
+        'DATE'
+    ]
     subject_as_ne = 0
-    subject_as_person = 0
-    subject_as_org = 0
-    subject_as_gpe = 0
-    subject_as_event = 0
-    subject_as_loc = 0
+    subject_as_entity_type_indicators = {}
+    subject_as_entity_type_counts = {}
+    subject_as_entity_type_total = 0
+    
+    subject_tokens = []
+    subject_token_matches = []
     
     for token in snippet_doc:
         for match in subject_name_matches:
             if token.idx >= match['start'] and token.idx < match['end']:
+                subject_tokens.append(token)
+                subject_token_matches.append(match)
                 subject_as_ne = 1
-                if token.ent_type_ == 'PERSON':
-                    subject_as_person = 1
-                elif token.ent_type_ == 'ORG':
-                    subject_as_org = 1
-                elif token.ent_type_ == 'GPE':
-                    subject_as_gpe = 1
-                elif token.ent_type_ == 'EVENT':
-                    subject_as_event = 1
-                elif token.ent_type_ == 'LOC':
-                    subject_as_loc = 1
+                if token.ent_type_ in subject_as_entity_types:
+                    subject_as_entity_type_indicators[token.ent_type_] = 1
+                    if token.ent_type_ not in subject_as_entity_type_counts:
+                        subject_as_entity_type_counts[token.ent_type_] = 0
+                    subject_as_entity_type_counts[token.ent_type_] += 1
+                    subject_as_entity_type_total += 1
     
     feature_values.append(subject_as_ne)
-    # feature_values.append(subject_as_person)
-    # feature_values.append(subject_as_org)
-    # feature_values.append(subject_as_gpe)
-    # feature_values.append(subject_as_event)
-    # feature_values.append(subject_as_loc)
+    feature_map['subject_as_ne'] = subject_as_ne
+    
+    for entity_type in subject_as_entity_types:
+        indicator = subject_as_entity_type_indicators[entity_type] if entity_type in subject_as_entity_type_indicators else 0
+        count = subject_as_entity_type_counts[entity_type] if entity_type in subject_as_entity_type_counts else 0
+        share = count / subject_as_entity_type_total if subject_as_entity_type_total > 0 else 0
         
-        #print('- ' + token.orth_ + ' ' + str(token.idx))
-        #print('  - ' + snippet[token.idx:min(len(snippet), token.idx + 100)])
+        # Unfortunately some of the following features just decrease performance. So sad.
+        # 
+        feature_map['subject_as_entity_type_' + entity_type + '_indicator'] = indicator
+        feature_values.append(indicator)
+        
+        # feature_map['subject_as_entity_type_' + entity_type + '_count'] = count
+        # feature_values.append(count)
+        
+        # feature_map['subject_as_entity_type_' + entity_type + '_share'] = share
+        # feature_values.append(share)
+    
+    # Features derived from object entity types.
+    
+    # FEATURE "object_as_ne": Value that indicates (1: yes, 0: no) whether a named
+    # entity was found by spacy overlapping a object name match.
+    
+    # FEATURE "object_as_entity_type_<entity_type>_indicator": Value that indicates
+    # whether an object name match intersects a named entity token of type <entity_type>
+    # identified by spacy. 1 if spacy found a named entity of type <entity_type>
+    # intersecting an object name match, 0 otherwise.
+    
+    # FEATURE "object_as_entity_type_<entity_type>_count": Number of spacy tokens of
+    # named entity type <entity_type> overlapping an object name match.
+    
+    # FEATURE "object_as_entity_type_<entity_type>_share": The percentage of all named
+    # entity tokens found by spacy overlapping an object name match that are of type
+    # <entity_type>.
+    
+    object_as_entity_types = [
+        'PERSON',
+        'ORG',
+        'GPE',
+        'EVENT',
+        'LOC',
+        'DATE'
+    ]
+    object_as_ne = 0
+    object_as_entity_type_indicators = {}
+    object_as_entity_type_counts = {}
+    object_as_entity_type_total = 0
+    
+    object_tokens = []
+    object_token_matches = []
+    
+    for token in snippet_doc:
+        for match in object_name_matches:
+            if token.idx >= match['start'] and token.idx < match['end']:
+                object_tokens.append(token)
+                object_token_matches.append(match)
+                object_as_ne = 1
+                if token.ent_type_ in object_as_entity_types:
+                    object_as_entity_type_indicators[token.ent_type_] = 1
+                    if token.ent_type_ not in object_as_entity_type_counts:
+                        object_as_entity_type_counts[token.ent_type_] = 0
+                    object_as_entity_type_counts[token.ent_type_] += 1
+                    object_as_entity_type_total += 1
+    
+    feature_values.append(object_as_ne)
+    feature_map['object_as_ne'] = object_as_ne
+    
+    for entity_type in object_as_entity_types:
+        indicator = object_as_entity_type_indicators[entity_type] if entity_type in object_as_entity_type_indicators else 0
+        count = object_as_entity_type_counts[entity_type] if entity_type in object_as_entity_type_counts else 0
+        share = count / object_as_entity_type_total if object_as_entity_type_total > 0 else 0
+        
+        # Unfortunately some of the following features just decrease performance. So sad.
+        
+        feature_map['object_as_entity_type_' + entity_type + '_indicator'] = indicator
+        feature_values.append(indicator)
+        
+        # feature_map['object_as_entity_type_' + entity_type + '_count'] = count
+        # feature_values.append(count)
+        
+        # feature_map['object_as_entity_type_' + entity_type + '_share'] = share
+        # feature_values.append(share)
+    
+    
+    
+    # Features for personal pronouns
+    
+    # FEATURE "he_indicator": Value (1: yes, 0: no) indicating whether the snippet
+    # contains the personal pronoun "he".
+    he_regex = '(^|[\s{0}])he($|[\s{0}])'.format(re.escape(string.punctuation))
+    he_indicator = 1 if len(re.findall(he_regex, lower_case_snippet)) > 0 else 0
+    feature_map['he_indicator'] = he_indicator
+    feature_values.append(he_indicator)
+    
+    # FEATURE "she_indicator": Value (1: yes, 0: no) indicating whether the snippet
+    # contains the personal pronoun "she".
+    she_regex = '(^|[\s{0}])she($|[\s{0}])'.format(re.escape(string.punctuation))
+    she_indicator = 1 if len(re.findall(she_regex, lower_case_snippet)) > 0 else 0
+    feature_map['she_indicator'] = she_indicator
+    feature_values.append(she_indicator)
+    
+    
+    
+    # Features derived from sentences
+    
+    # FEATURE "subject_name_in_first_sentence": Indicates (1: yes, 0: no) whether the
+    # subject name occurred in the first sentence
+    
+    # FEATURE "object_name_in_first_sentence": Indicates (1: yes, 0: no) whether the
+    # object name occurred in the first sentence
+    
+    # FEATUER "first_sentence_with_subject": Index of the first sentence in which the
+    # subject name was found
+    
+    # FEATURE "first_sentence_with_object": Index of the first sentence in which the
+    # object name was found
+    
+    # FEATURE "subject_and_object_in_same_sentence": Indicates (1: yes, 0: no) whether
+    # the subject and object name have ever been found in the same sentence
+    
+    # FEATURE "avg_sentence_length": The average sentence length measured in spacy
+    # tokens.
+    
+    # FEATURES "<shortest|longest|first>_sentence_length": Length of the shortest|
+    # longest|first sentence measured in spacy tokens
+    
+    # FEATURE "sentence_counter": The number of sentences in the snippet
+    
+    subject_name_in_first_sentence = 0
+    object_name_in_first_sentence = 0
+    
+    first_sentence_with_subject = -1
+    first_sentence_with_object = -1
+    
+    subject_and_object_in_same_sentence = 0
+    
+    shortest_sentence_length = -1
+    longest_sentence_length = -1
+    first_sentence_length = -1
+    avg_sentence_length = -1
+    
+    sentence_counter = 0
+    for sentence in snippet_doc.sents:
+        token_count = sentence.end - sentence.start
+        length = sentence.end_char - sentence.start_char
+        
+        if shortest_sentence_length == -1 or token_count < shortest_sentence_length:
+            shortest_sentence_length = token_count
+        
+        if longest_sentence_length == -1 or token_count < longest_sentence_length:
+            longest_sentence_length = token_count
+        
+        if sentence_counter == 0:
+            first_sentence_length = token_count
+        
+        avg_sentence_length += token_count
+        
+        subject_occurred = False
+        for match in subject_name_matches:
+            if match['start'] in range(sentence.start_char, sentence.end_char):
+                if sentence_counter == 0:
+                    subject_name_in_first_sentence = 1
+                if first_sentence_with_subject == -1:
+                    first_sentence_with_subject = sentence_counter
+        
+        for match in object_name_matches:
+            if match['start'] in range(sentence.start_char, sentence.end_char):
+                if sentence_counter == 0:
+                    object_name_in_first_sentence = 1
+                if first_sentence_with_object == -1:
+                    first_sentence_with_object = sentence_counter
+                if subject_occurred:
+                    subject_and_object_in_same_sentence = 1
+        
+        sentence_counter += 1
+    
+    avg_sentence_length /= sentence_counter
+    
+    feature_map['subject_name_in_first_sentence'] = subject_name_in_first_sentence
+    feature_values.append(subject_name_in_first_sentence)
+    feature_map['object_name_in_first_sentence'] = object_name_in_first_sentence
+    feature_values.append(object_name_in_first_sentence)
+    
+    feature_map['first_sentence_with_subject'] = first_sentence_with_subject
+    feature_values.append(first_sentence_with_subject)
+    feature_map['first_sentence_with_object'] = first_sentence_with_object
+    feature_values.append(first_sentence_with_object)
+    
+    feature_map['subject_and_object_in_same_sentence'] = subject_and_object_in_same_sentence
+    feature_values.append(subject_and_object_in_same_sentence)
+    
+    feature_map['avg_sentence_length'] = avg_sentence_length
+    feature_values.append(avg_sentence_length)
+    feature_map['shortest_sentence_length'] = shortest_sentence_length
+    feature_values.append(shortest_sentence_length)
+    feature_map['longest_sentence_length'] = longest_sentence_length
+    feature_values.append(longest_sentence_length)
+    feature_map['first_sentence_length'] = first_sentence_length
+    feature_values.append(first_sentence_length)
+    
+    feature_map['sentence_counter'] = sentence_counter
+    feature_values.append(sentence_counter)
+    
+    
+    
+    # Distance between subject and object
+    
+    # FEATURE "subject_object_min_distance": Minimum number of tokens between occurrences
+    # of the subject and the object
+    
+    subject_object_min_distance = -1
+    
+    prev_subject = False
+    prev_object = False
+    prev_counter = -1
+    token_counter = 0
+    for token in snippet_doc:
+        if token in subject_tokens:
+            if prev_object:
+                distance = token_counter - prev_counter
+                if subject_object_min_distance == -1 or distance < subject_object_min_distance:
+                    subject_object_min_distance = distance
+                #for t in snippet_doc[prev_counter:token_counter]:
+                #    print('  o->s: ' + t.orth_)
+            prev_subject = True
+            prev_object = False
+            prev_counter = token_counter
+        if token in object_tokens:
+            if prev_subject:
+                distance = token_counter - prev_counter
+                if subject_object_min_distance == -1 or distance < subject_object_min_distance:
+                    subject_object_min_distance = distance
+                #for t in snippet_doc[prev_counter:token_counter]:
+                #    print('  s->o: ' + t.orth_)
+            prev_object = True
+            prev_subject = False
+            prev_counter = token_counter
+        token_counter += 1
+    
+    feature_map['subject_object_min_distance'] = subject_object_min_distance
+    feature_values.append(subject_object_min_distance)
+    
+    
+    
+    # Subject and object relation to head
+    
+    # FEATURE "subj_dep_indicator_<relation_type>": Indicates (1: yes, 0: no) whether a
+    # subject token ever occurs in a (spacy) dependency relation of type <relation_type>
+    # to its head.
+    
+    # FEATURE "obj_dep_indicator_<relation_type>": Indicates (1: yes, 0: no) whether a
+    # object token ever occurs in a (spacy) dependency relation of type <relation_type>
+    # to its head.
+    
+    checked_dep = ['nsubj', 'nsubjpass', 'dobj', 'pobj', 'ROOT']
+    
+    subj_dep_indicators = {d:0 for d in checked_dep}
+    for token in subject_tokens:
+        if token.dep_ in checked_dep:
+            subj_dep_indicators[token.dep_] = 1
+    
+    obj_dep_indicators = {d:0 for d in checked_dep}
+    for token in object_tokens:
+        if token.dep_ in checked_dep:
+            obj_dep_indicators[token.dep_] = 1
+    
+    for dep in checked_dep:
+        feature_map['subj_dep_indicator_' + dep] = subj_dep_indicators[dep]
+        feature_values.append(subj_dep_indicators[dep])
+        feature_map['obj_dep_indicator_' + dep] = obj_dep_indicators[dep]
+        feature_values.append(obj_dep_indicators[dep])
+    
+    
+    # Dependency tree root path
+    
+    # FEATURE "<min|max>_<subj|obj>_root_path_len": Minimal|maximal length of the path
+    # from a subject|object token to the root of the spacy dependency tree it belongs to
+    
+    min_subj_root_path_len = -1
+    max_subj_root_path_len = -1
+    
+    for token in subject_tokens:
+        current = token
+        root_path_len = 0
+        while current.head != current:
+            current = current.head
+            root_path_len += 1
+        
+        if min_subj_root_path_len == -1 or root_path_len < min_subj_root_path_len:
+            min_subj_root_path_len = root_path_len
+        if max_subj_root_path_len == -1 or root_path_len > max_subj_root_path_len:
+            max_subj_root_path_len = root_path_len
+    
+    feature_map['min_subj_root_path_len'] = min_subj_root_path_len
+    feature_values.append(min_subj_root_path_len)
+    feature_map['max_subj_root_path_len'] = max_subj_root_path_len
+    feature_values.append(max_subj_root_path_len)
+    
+    min_obj_root_path_len = -1
+    max_obj_root_path_len = -1
+    
+    for token in object_tokens:
+        current = token
+        root_path_len = 0
+        while current.head != current:
+            current = current.head
+            root_path_len += 1
+        
+        if min_obj_root_path_len == -1 or root_path_len < min_obj_root_path_len:
+            min_obj_root_path_len = root_path_len
+        if max_obj_root_path_len == -1 or root_path_len > max_obj_root_path_len:
+            max_obj_root_path_len = root_path_len
+    
+    feature_map['min_obj_root_path_len'] = min_obj_root_path_len
+    feature_values.append(min_obj_root_path_len)
+    feature_map['max_obj_root_path_len'] = max_obj_root_path_len
+    feature_values.append(max_obj_root_path_len)
     
     
     
@@ -513,7 +861,7 @@ def print_aggregated_evaluation(sys_better_count, avg_sys_accuracy, avg_baseline
     print('| Average accuracy system   | ' + format_percents(avg_sys_accuracy).rjust(18) + ' |')
     print('+---------------------------+--------------------+')
 
-def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemma_lists, api_key, entity_cache, dev_size=None, verbose=False):
+def get_feature_matrix_and_target_classes_for_corpus_file(corpus_file_path, arg_lists, api_key, entity_cache, dev_size=None, verbose=False):
     """
     This function processes the corpus file line by line and gets the features and the
     target class for each processable item.
@@ -599,9 +947,9 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
             
             snippet = item_data['evidences'][0]['snippet']
             
-            subject_name_matches = find_entity_in_snippet(subject_name, snippet)
+            subject_name_matches = find_entity_in_snippet(subject_name, snippet, 'subject')
             
-            object_name_matches = find_entity_in_snippet(object_name, snippet)
+            object_name_matches = find_entity_in_snippet(object_name, snippet, 'object')
             
             # As stated in the exercise text: if we can not find the entity name in the
             # snippet, the corpus item can be skipped ("If you cannot find the entities
@@ -612,7 +960,6 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
             # Determine and remember the target class (used f.e. for training the
             # Logistic Regression model with `LogisticRegression.fit(...)`)
             target_classes.append(1 if is_positive_item(item_data) else 0)
-            
             
             # Get spacy parsed snippet. Add it to cache if it is within the first 3000
             # snippets.
@@ -625,7 +972,7 @@ def get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemm
                     snippet_docs.append(snippet_doc)
             
             # Collect the features and add the values to the feature matrix
-            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, lemma_lists)
+            (feature_map, feature_values) = collect_features(subject_name, object_name, subject_name_matches, object_name_matches, item_data, snippet, snippet_doc, arg_lists)
             feature_matrix.append(feature_values)
             
             # # `corpus_items` was used to extract lemmas for features (see below). Used
@@ -713,32 +1060,51 @@ def main():
     # Get command line attributes
     allowed_actions = ['lrtrain', 'lrclassify', 'lrvalidate']
     if len(sys.argv) < 4 or sys.argv[1] not in allowed_actions:
+        print('   .__           .__  .__         ')
+        print('  |  |__   ____ |  | |  |   ____  ')
+        print('  |  |  \_/ __ \|  | |  |  /  _ \ ')
+        print('  |   Y  \  ___/|  |_|  |_(  <_> )')
+        print('  |___|  /\___  >____/____/\____/ ')
+        print('       \/     \/                  ')
         print('+----------------------------------------------------------------------+')
-        print('| Hello, unfortunately you specified an illegal number of arguments or |')
+        print('| Unfortunately you specified an unexpected number of arguments or     |')
         print('| requested an unknown action. See in the comment in the source code,  |')
         print('| in the report or below this message how to call the program. See you |')
         print('| soon.                                                                |')
-        print('+----------------------------------------------------------------------+')
-        print('Usage  : python3 assignment3.py <action: (' + ('|'.join(allowed_actions)) + ')> <path to corpus> <path to lemmas list>[ <Google API Key>]')
-        print('Example: python3 ' + allowed_actions[0] + ' assignment3.py place-of-birth_train.json place-of-birth_lemmas.json ABc1De2fg3Hi4JkLm567No8p9Qr')
-        print('Example: python3 ' + allowed_actions[1] + ' assignment3.py my_test_corpus.json my_lemmas.json')
+        print('+----------------------------------------------------------------------/')
+        print('| Usage  : python3 assignment3.py <action: (' + ('|'.join(allowed_actions)) + ')> <path to corpus> <path to lemmas list>[ <Google API Key>]')
+        print('+-----------------------------------------------------------------------')
+        print('| Example 1 (only training; use your own API key if new features need ')
+        print('| to be downloaded, otherwise you can omit the API key):')
+        print('|')
+        print('|    python3 assignment3.py lrtrain institution_train.json institution_args.json G00gleAPIk3y')
+        print('+-----------------------------------------------------------------------')
+        print('| Example 2 (training, then testing/classification):')
+        print('|')
+        print('|    python3 assignment3.py lrtrain institution_train.json institution_args.json')
+        print('|    python3 assignment3.py lrclassify institution_test.json institution_args.json')
+        print('+-----------------------------------------------------------------------')
+        print('| Example 3 (10-fold cross validation)')
+        print('|')
+        print('|    python3 assignment3.py lrvalidate place-of-birth_nodev.json place-of-birth_args.json')
+        print('+-----------------------------------------------------------------------')
         exit(1)
     
     action = sys.argv[1]
     corpus_file_path = sys.argv[2]
-    lemma_list_path = sys.argv[3]
+    arg_list_path = sys.argv[3]
     api_key = sys.argv[4] if len(sys.argv) >= 5 else ''
     
     # Load cached entities to minimize time consuming requests
     entity_cache = load_entity_cache()
     
     # Load the lemma lists specified in the command line arguments
-    lemma_lists = [[]]
-    with open(lemma_list_path, encoding='utf-8') as lemma_lists_file:
-        lemma_lists = json.load(lemma_lists_file)
+    arg_lists = [[]]
+    with open(arg_list_path, encoding='utf-8') as arg_lists_file:
+        arg_lists = json.load(arg_lists_file)
     
     # Get the `feature_matrix` and the (gold) `target_classes`
-    (feature_matrix, target_classes) = get_feauter_matrix_and_target_classes_for_corpus_file(corpus_file_path, lemma_lists, api_key, entity_cache, sys.argv[4] if (len(sys.argv) >= 5 and len(sys.argv[4]) <= 2) else None , True)
+    (feature_matrix, target_classes) = get_feature_matrix_and_target_classes_for_corpus_file(corpus_file_path, arg_lists, api_key, entity_cache, sys.argv[4] if (len(sys.argv) >= 5 and len(sys.argv[4]) <= 2) else None , True)
     
     # Perform the requested action (e.g. training, testing, 10 fold cross validation)
     if action == 'lrtrain':
