@@ -8,16 +8,17 @@ It expects the following command line arguments:
 
 1. The action the script should perform. This must be one of:
    
-   - "lrtrain": tains the Logistic Regression model; learns the weights from the
+   - `lrtrain`: tains the Logistic Regression model; learns the weights from the
      specified training corpus; ("lr" stands for Logistic Regression)
-   - "lrclassify": uses the learned weights to classify the items of the specified test
-     corpus using the Logistic Regression model.
-   - "lrvalidate": performs a 10 fold cross validation of the Logistic Regression model
-2. The path to the corpus file
-3. The path to the file containing the argument lists from which some features are
-   constructed
+   - `rclassify`: uses the learned weights to classify the items of the specified test
+     corpus items (using the trained Logistic Regression model stored during the
+     execution of the `lrtrain` action).
+   - `lrvalidate`: performs a 10 fold cross validation
+2. The path to the corpus file (e.g. "institution_test.json")
+3. The path to the file containing the argument lists from which features are constructed
+   (e.g. "institution_args.json" or "place-of-birth_args.json")
 4. The Google API Key; This argument can be ommitted if all entities are already in the
-   cache (which is the case for all institution and the place of birth corpus versions)
+   cache (which is the case for all institution and the place of birth data set versions)
 
 Example 1 (only training; use your own API key if new features need to be downloaded,
 otherwise you can omit the API key):
@@ -33,7 +34,7 @@ python3 assignment3.py lrtrain institution_train.json institution_args.json
 python3 assignment3.py lrclassify institution_test.json institution_args.json
 ```
 
-Example 3 (10-fold cross validation)
+Example 3 (10-fold cross validation):
 
 ```
 python3 assignment3.py lrvalidate place-of-birth_nodev.json place-of-birth_args.json
@@ -395,14 +396,83 @@ def collect_features(subject_name, object_name, subject_name_matches, object_nam
     
     
     
+    # FEATURE "exact_subject_name_match_indicator": Indicates (1: yes, 0: no) whether
+    # the exact subject name retrieved from Google was found in the snippet
+    exact_subject_name_match_indicator = 1 if snippet.find(subject_name) != -1 else 0
+    feature_map['exact_subject_name_match_indicator'] = exact_subject_name_match_indicator
+    feature_values.append(exact_subject_name_match_indicator)
+    
+    # FEATURE "exact_object_name_match_indicator": Indicates (1: yes, 0: no) whether
+    # the exact object name retrieved from Google was found in the snippet
+    exact_onject_name_match_indicator = 1 if snippet.find(object_name) != -1 else 0
+    feature_map['exact_onject_name_match_indicator'] = exact_onject_name_match_indicator
+    feature_values.append(exact_onject_name_match_indicator)
+    
+    
+    
+    # FEATURE "object_comma_appended_place_in_snippet": Indicates (1: yes, 0: no) whether
+    # the upper case part of the object name after the comma (that often is a country or
+    # state name) is found in the snippet
+    object_comma_appended_place_in_snippet = 0
+    for match in re.finditer('(?<=,)(\s[A-Z][A-Za-z]+)+$', object_name):
+        if snippet.find(match.group(0)) == -1:
+            object_comma_appended_place_in_snippet = 1
+    feature_map['object_comma_appended_place_in_snippet'] = object_comma_appended_place_in_snippet
+    feature_values.append(object_comma_appended_place_in_snippet)
+    
+    
+    
+    # FEATURES "<all|first>_subject_name_parts_in_snippet": Indicates (1: yes, 0: no)
+    # whether the first|all (non-1-length, whitespace or punctuation separated) parts of
+    # the subject name are found in the snippet
+    subject_name_parts = re.split('[\s{0}]'.format(re.escape(string.punctuation)), subject_name)
+    all_subject_name_parts_in_snippet = 1
+    first_subject_name_part_in_snippet = 0 if (len(subject_name_parts) > 1 and snippet.find(subject_name_parts[0]) == -1) else 1
+    all_upper_case_subject_name_parts_in_snippet = 1
+    for name_part in subject_name_parts:
+        if len(name_part) > 2 and snippet.find(name_part) == -1:
+            all_subject_name_parts_in_snippet = 0
+            if name_part[0].isupper():
+                all_upper_case_subject_name_parts_in_snippet = 0
+            break
+    feature_map['all_subject_name_parts_in_snippet'] = all_subject_name_parts_in_snippet
+    feature_values.append(all_subject_name_parts_in_snippet)
+    feature_map['first_subject_name_part_in_snippet'] = first_subject_name_part_in_snippet
+    feature_values.append(first_subject_name_part_in_snippet)
+    
+    # FEATURE "all_object_name_parts_in_snippet": Indicates (1: yes, 0: no) whether all
+    # (non-1-length, whitespace or punctuation separated) parts of the object name are
+    # found in the snippet
+    
+    # FEATURE "all_upper_case_object_name_parts_in_snippet": Indicates (1: yes, 0: no)
+    # whether all (non-1-length, whitespace or punctuation separated) upper case parts of
+    # the object name are found in the snippet
+    
+    object_name_parts = re.split('[\s{0}]'.format(re.escape(string.punctuation)), object_name)
+    all_object_name_parts_in_snippet = 1
+    all_upper_case_object_name_parts_in_snippet = 1
+    for name_part in object_name_parts:
+        if len(name_part) > 2 and snippet.find(name_part) == -1:
+            all_object_name_parts_in_snippet = 0
+            if name_part[0].isupper():
+                all_upper_case_object_name_parts_in_snippet = 0
+            break
+    feature_map['all_object_name_parts_in_snippet'] = all_object_name_parts_in_snippet
+    feature_values.append(all_object_name_parts_in_snippet)
+    feature_map['all_upper_case_object_name_parts_in_snippet'] = all_upper_case_object_name_parts_in_snippet
+    feature_values.append(all_upper_case_object_name_parts_in_snippet)
+    
+    
+    
     # Features derived from lemma list `arg_lists[0]`:
     
     # FEATURE "lemma_list_count_<lemma>": The number of occurrences of the
-    # lemmas in the current lemma list in the snippet
+    # lemmas in the current lemma list in the snippet (normalized by the total number of
+    # lemmas)
     collect_lemma_occurrence_counts_as_features(arg_lists[0], snippet_doc, 'lemma_list_count_', feature_map, feature_values)
     
     # FEATURE "lemma_list_indicator_<lemma>": Indicators for occurrence of the
-    # lemmas in the current lemma list in the snippet
+    # lemmas in the first list in the snippet
     collect_lemma_occurrence_indicators_as_features(arg_lists[0], snippet_doc, 'lemma_list_indicator_', feature_map, feature_values)
     
     
@@ -1084,7 +1154,7 @@ def main():
         print('|    python3 assignment3.py lrtrain institution_train.json institution_args.json')
         print('|    python3 assignment3.py lrclassify institution_test.json institution_args.json')
         print('+-----------------------------------------------------------------------')
-        print('| Example 3 (10-fold cross validation)')
+        print('| Example 3 (10-fold cross validation):')
         print('|')
         print('|    python3 assignment3.py lrvalidate place-of-birth_nodev.json place-of-birth_args.json')
         print('+-----------------------------------------------------------------------')
