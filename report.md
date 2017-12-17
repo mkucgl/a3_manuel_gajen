@@ -6,7 +6,8 @@ Handed in by Manuel Kunz and Gajendira Sivajothi
 Introduction
 ------------
 
-The code we produced to solve the programming assignment can be found in the file "assignment3.py". We created a single classifier that can be used for both types of data
+The code we produced to solve the programming assignment can be found in the file
+"assignment3.py". We created a single classifier that can be used for both types of data
 (the path to a list of institution or place of birth specific lemmas can be specified via
 the command line arguments described just below). This one program can perform the
 training (action `lrtrain`), the testing/classification (action `lrclassify`) and the
@@ -60,7 +61,135 @@ python3 assignment3.py lrvalidate place-of-birth_nodev.json place-of-birth_args.
 Documentation of Development
 ----------------------------
 
-TODO
+In this section we describe the development process that lead to the solution we handed
+in. The actual code can be found in the file "assignment3". It is well structured into
+functions and all functions are extensively commented. In order to keep a clean structure
+for this report we did not copy/paste the code sections into the report. Instead we
+reference the relevant function names and the reader can look up the implementation
+details in the code.
+
+### Exercise 1 and General Preparation
+
+1.  After reading the entire exercise sheet we created the file "assignment3.py" for our
+    solution. We decided to create a single program that can classify both types of
+    relations. An empty `main` function was created.
+2.  We downloaded the files "20130403-institution.json" and
+    "20130403-place-of-birth.json"
+3.  We inspected the instructions/examples on how to resolve IDs (ResolvingIDs.docx). We
+    assessed the requirements for using ID resolution and created a Google account for
+    our team and an API key for this account.
+4.  We created the file "IMD_resolver.py" which initially contained the exact code found
+    in "ResolvingIDs.docx" and included it in "assignment3.py". We added all the
+    necessary `import`s in both files and tries to resolve some first IDs. After this
+    worked made a small change to "IMD_resolver.py" so that it returnes the entire data
+    retrieved from Google (and not just the entity name) so that we could later store all
+    the information locally (because we had heard that downloading all the entities takes
+    a long time and we did not want to risk doing it twice).
+    
+    Now we were able to resolve IDs (without local cache).
+5.  Since downloading all the entity data really takes a long time, we then implemented
+    local caching. When new entities are downloaded, they are added to a dictionary
+    during runtime (in code `entity_cache`). After programm execution the script should
+    store all entity data it knows in a local file (file: "entity_cache.json", see
+    function: `store_entity_cache`). When the program starts it should load all the
+    entity data gathered in earlier executions (function: `load_entity_cache`).
+    
+    For convenient use we wrote the function `get_entity_name` which gets the entity name
+    from the `entity_cache` if possible and defaults to downloading the entity data if
+    necessary.
+6.  We put the code for processing a data set file line-by-line into "assignment3.py",
+    parsed the json for each line (reacted to illegal backslashes) and called
+    `get_entity_name` on all subject/object IDs. This way we built up our cache with all
+    the necessary entity data (which took a whole night to execute because this one time
+    all the data had to be downloaded from Google).
+7.  Next we addressed the problem of aggregating the raters' judgments into a single
+    judgment (multiple yes/no into a single yes/no): the target/gold class. We chose to
+    treat an item positively (relation present) if a certain percentage of raters said
+    yes (default 50%). For this we implemented the function `is_positive_item`.
+8.  Next we tackled the problem of finding the entity names in the snippet. After looking
+    at some of the entity names and the respective snippets (`print`), we chose to go
+    with a regular expression approach to finding the entity names. This is implemented
+    in the function `find_entity_in_snippet` which has a comment explaining how it works
+    in detail.
+9.  Then we split the corpora/data sets (development/training/test). The exact way the
+    sets were split is described below (see section [Data Sets](#data-sets) below).
+    
+    The "_nodev" data sets (also described in [Data Sets](#data-sets) below) containing
+    all but the development data on which the 10-fold cross-validation could be run were
+    created only later during the implementation of the 10-fold cross validation (see
+    below).
+
+### Exercise 2
+
+1.  We created the function `collect_features` for extracting features.
+2.  We inserted two very simple features: `subject_match_count` and `object_match_count`
+    (features are described below) to have some features to work with during development.
+3.  At this point we did not yet know how the Logistic Regression had to be performed
+    (What has to be `import`ed/installed? What arguments will the package expect? What
+    results will it produce?).
+    
+    - We did not know how much time it would take to implement the use of the Logistic
+      Regression.
+    - We wanted to know in which format the features had to be represented.
+    - We wanted to see what result the features ultimately produce.
+    
+    Therefore, instead of adding more features right away, we continued with the
+    implementation of the code for the call to the Logistic Regression (described below
+    in the next section [Exercise 3](#exercise-3)).
+4.  Since we wanted to use some lemmas as features (occurrence indicators), we tried to
+    produce a lemma list automatically with sklearn's `SelectKBest` from the development
+    data sets. For this the function `get_k_best_lemmas` was implemented. The result were
+    the JSON list files "institution_args.json" and "place-of-birth_args.json". We
+    implemented the functionality of accepting a list file as command line parameter
+    (in `main` and in `get_feature_matrix_and_target_classes_for_corpus_file`) and
+    derived the feature values in `collect_features`.
+5.  Since we have started using spaCy and noticed that it takes a lot of time parsing
+    each snippet (`nlp(snippet)` for thousands of snippets), we implemented a mechanism
+    that stores the spaCy parses between executions of the program and loads them again
+    (`pickle.load(open(snippet_docs_pickle_path, 'rb'))`,
+    `pickle.dump(snippet_docs, open(snippet_docs_pickle_path, 'wb'))`) for the first
+    3000 items. This way a lot of waiting could be avoided.
+6.  Finally we added features until the time for this programming assignment was up. All
+    the features are described below and in the function `collect_features`.
+
+### Exercise 3
+
+1.  We researched sklearn's `LogisticRegression` and made a simple test with dummy data
+    with the `feature_matrix` initially containing only two columns (see above). The
+    `fit` and `predict` methods worked and we were able to retrieve the coefficients 
+    (weights) we expected from the lecture.
+2.  Our program was structured to have separate training (`lrtrain`) and testing
+    (`lrclassify`) actions which which would be run individually/consecutively. To make
+    this work we had to store the trained weights between executions. There seems to be
+    no way of creating a `LogisticRegression` object only from weights. We therefore
+    stored the entire object using `pickle` (see functions
+    `store_logistic_regression_object` and `load_logistic_regression_object`). This works
+    very well.
+3.  We collected the first evaluation data (initially only system and baseline accuracy).
+    We chose the following [baseline](#baseline): The baseline performance is the highest
+    performance achievable assigning the same class to all the items (assigning the class
+    that is more frequent in the data set). We printed this initial evaluation data and
+    were "shocked" to see that with the initial 2 features our classifier exactly follows
+    the baseline strategy. Of course this changed when we started adding more features
+    but until the end our classifier had a tendency of classifying too many items as
+    positive (see also [Error Analysis](#error-analysis)).
+4.  We implemented the 10-fold cross-validation using sklearn's `KFold` (see `main`
+    function under action `lrvalidate` in "assignment3.py"). As mentioned above, we
+    created the "_nodev" data sets (described below) for running the 10-fold
+    cross-validation on.
+5.  We refined our evaluation code especially to also include a confusion matrix and
+    average performance data over the folds (used for the `lrclassify` and the
+    `lrvalidate` actions). The function where you can find the details is
+    `print_evaluation`. To see the results you can run the program or look at the results
+    provided in [Appendix 1: Results](#appendix-1-results).
+
+### Exercise 4
+
+1.  In the very end we wrote this report.
+
+### Exercise 5
+
+1.  Looking forward to the presentation next Tuesday.
 
 Decisions
 ---------
@@ -90,6 +219,12 @@ report were created.
 
 We chose to treat an item as positive (relation present) if at least 50% of the raters
 said "yes" to it.
+
+### Baseline
+
+As a baseline we chose the strategy of only assigning one class. The baseline performance
+is the best performance that could be achieved using this strategy (always assigning the
+class that occurs more often in the data).
 
 ### Features
 
@@ -146,25 +281,25 @@ the classifier.
 - `ner_entity_type_indicator_<entity_type>`: Indicators whether entity type occurs in
   snippet
 - `subject_as_ne`: Value that indicates (1: yes, 0: no) whether a named entity was found
-  by spacy overlapping a subject name match.
+  by spaCy overlapping a subject name match.
 - `subject_as_entity_type_<entity_type>_indicator`: Value that indicates whether a
   subject name match intersects a named entity token of type `<entity_type>` identified
-  by spacy. 1 if spacy found a named entity of type `<entity_type>` intersecting a
+  by spaCy. 1 if spaCy found a named entity of type `<entity_type>` intersecting a
   subject name match, 0 otherwise.
-- `subject_as_entity_type_<entity_type>_count`: Number of spacy tokens of named entity
+- `subject_as_entity_type_<entity_type>_count`: Number of spaCy tokens of named entity
   type `<entity_type>` overlapping a subject name match.
 - `subject_as_entity_type_<entity_type>_share`: The percentage of all named entity tokens
-  found by spacy overlapping a subject name match that are of type `<entity_type>`.
+  found by spaCy overlapping a subject name match that are of type `<entity_type>`.
 - `object_as_ne`: Value that indicates (1: yes, 0: no) whether a named entity was found
-  by spacy overlapping a object name match.
+  by spaCy overlapping a object name match.
 - `object_as_entity_type_<entity_type>_indicator`: Value that indicates whether an object
-  name match intersects a named entity token of type `<entity_type>` identified by spacy.
-  1 if spacy found a named entity of type `<entity_type>` intersecting an object name
+  name match intersects a named entity token of type `<entity_type>` identified by spaCy.
+  1 if spaCy found a named entity of type `<entity_type>` intersecting an object name
   match, 0 otherwise.
-- `object_as_entity_type_<entity_type>_count`: Number of spacy tokens of named entity
+- `object_as_entity_type_<entity_type>_count`: Number of spaCy tokens of named entity
   type `<entity_type>` overlapping an object name match.
 - `object_as_entity_type_<entity_type>_share`: The percentage of all named entity tokens
-  found by spacy overlapping an object name match that are of type `<entity_type>`.
+  found by spaCy overlapping an object name match that are of type `<entity_type>`.
 
 #### Personal Pronouns
 
@@ -191,17 +326,17 @@ mentioned in articles as possible feature.
   found
 - `subject_and_object_in_same_sentence`: Indicates (1: yes, 0: no) whether the subject
   and object name have ever been found in the same sentence
-- `avg_sentence_length`: The average sentence length measured in spacy tokens.
+- `avg_sentence_length`: The average sentence length measured in spaCy tokens.
 - `<shortest|longest|first>_sentence_length`: Length of the shortest| longest|first
-  sentence measured in spacy tokens
+  sentence measured in spaCy tokens
 - `sentence_counter`: The number of sentences in the snippet
 - `subject_object_min_distance`: Minimum number of tokens between occurrences
 - `subj_dep_indicator_<relation_type>`: Indicates (1: yes, 0: no) whether a subject token
-  ever occurs in a (spacy) dependency relation of type `<relation_type>` to its head.
+  ever occurs in a (spaCy) dependency relation of type `<relation_type>` to its head.
 - `obj_dep_indicator_<relation_type>`: Indicates (1: yes, 0: no) whether a object token
-  ever occurs in a (spacy) dependency relation of type `<relation_type>` to its head.
+  ever occurs in a (spaCy) dependency relation of type `<relation_type>` to its head.
 - `<min|max>_<subj|obj>_root_path_len`: Minimal|maximal length of the path from a
-  subject|object token to the root of the spacy dependency tree it belongs to
+  subject|object token to the root of the spaCy dependency tree it belongs to
 
 Error Analysis
 --------------
